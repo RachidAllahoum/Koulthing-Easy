@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { SlidersHorizontal, ChevronDown, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
@@ -35,11 +35,15 @@ interface ArticleFiltersProps {
   onFiltersChange?: (filters: { category: string; price: string; sort: string }) => void
 }
 
-export function ArticleFilters({ onFiltersChange }: ArticleFiltersProps = {}) {
+export function ArticleFilters({ onFiltersChange }: ArticleFiltersProps) {
   const [selectedCategory, setSelectedCategory] = useState("All")
   const [selectedPrice, setSelectedPrice] = useState("all")
   const [selectedSort, setSelectedSort] = useState("recommended")
   const [showFilters, setShowFilters] = useState(false)
+
+  /** Avoid unstable `onFiltersChange` identity causing an infinite parent↔child update loop */
+  const onFiltersChangeRef = useRef(onFiltersChange)
+  onFiltersChangeRef.current = onFiltersChange
 
   const activeFiltersCount = [
     selectedCategory !== "All" ? 1 : 0,
@@ -47,14 +51,14 @@ export function ArticleFilters({ onFiltersChange }: ArticleFiltersProps = {}) {
     selectedSort !== "recommended" ? 1 : 0,
   ].reduce((a, b) => a + b, 0)
 
-  // Notify parent of filter changes
+  // Notify parent of filter changes (only when actual filter state changes)
   useEffect(() => {
-    onFiltersChange?.({
+    onFiltersChangeRef.current?.({
       category: selectedCategory,
       price: selectedPrice,
       sort: selectedSort,
     })
-  }, [selectedCategory, selectedPrice, selectedSort, onFiltersChange])
+  }, [selectedCategory, selectedPrice, selectedSort])
 
   const clearFilters = () => {
     setSelectedCategory("All")

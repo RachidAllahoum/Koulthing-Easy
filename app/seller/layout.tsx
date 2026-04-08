@@ -2,7 +2,9 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
+import { useAuth } from "@/lib/auth-context"
+import { useShops } from "@/lib/shops-context"
 import {
   LayoutDashboard,
   Package,
@@ -35,7 +37,17 @@ const navItems = [
 
 export default function SellerLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  const router = useRouter()
+  const { user, isLoading } = useAuth()
+  const { getSellerShops } = useShops()
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+
+  const myShop = user ? getSellerShops(user.id)[0] : undefined
+
+  if (!isLoading && (!user || (!user.isSeller && !user.isAdmin))) {
+    router.push("/")
+    return null
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -94,16 +106,20 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
 
         {/* Shop Selector */}
         <div className="p-4 border-b border-border">
-          <button className="w-full flex items-center gap-3 p-3 bg-secondary rounded-xl hover:bg-secondary/80 transition-colors">
+          <div className="w-full flex items-center gap-3 p-3 bg-secondary rounded-xl">
             <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
               <Store className="w-5 h-5 text-primary" />
             </div>
-            <div className="flex-1 text-left">
-              <p className="text-sm font-medium text-foreground">Fashion House</p>
-              <p className="text-xs text-muted-foreground">Premium Plan</p>
+            <div className="flex-1 text-left min-w-0">
+              <p className="text-sm font-medium text-foreground truncate">
+                {myShop?.name ?? "No shop found"}
+              </p>
+              <p className="text-xs text-muted-foreground truncate">
+                {myShop ? "Your store" : "Contact support if this is unexpected"}
+              </p>
             </div>
-            <ChevronDown className="w-4 h-4 text-muted-foreground" />
-          </button>
+            <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0 opacity-50" aria-hidden />
+          </div>
         </div>
 
         {/* Navigation */}

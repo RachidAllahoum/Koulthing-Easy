@@ -8,14 +8,13 @@ import { Footer } from "@/components/footer"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Mail, Lock, User, ArrowRight, Check } from "lucide-react"
-import { useAuth, type UserRole } from "@/lib/auth-context"
+import { useAuth } from "@/lib/auth-context"
 
 export default function RegisterPage() {
   const router = useRouter()
   const { register: authRegister } = useAuth()
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [selectedRole, setSelectedRole] = useState<UserRole>("buyer")
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -37,8 +36,8 @@ export default function RegisterPage() {
     }
     setIsLoading(true)
     try {
-      await authRegister(formData.name, formData.email, formData.password, selectedRole)
-      router.push(selectedRole === "seller" ? "/seller" : "/profile")
+      await authRegister(formData.name, formData.email, formData.password)
+      router.push("/profile")
     } catch (error) {
       alert("Registration failed")
     } finally {
@@ -67,14 +66,16 @@ export default function RegisterPage() {
                 {(["buyer", "seller"] as const).map((role) => (
                   <button
                     key={role}
-                    onClick={() => setSelectedRole(role)}
+                    type="button"
+                    onClick={() => {}}
                     className={`p-3 rounded-lg border-2 transition-colors capitalize text-sm font-medium ${
-                      selectedRole === role
+                      role === "buyer"
                         ? "border-primary bg-primary/10 text-primary"
-                        : "border-border text-foreground hover:border-primary/50"
+                        : "border-border text-muted-foreground opacity-60"
                     }`}
+                    disabled={role === "seller"}
                   >
-                    {role}
+                    {role === "seller" ? "seller (soon)" : role}
                   </button>
                 ))}
               </div>

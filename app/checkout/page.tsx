@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useCart } from "@/lib/cart-context"
 import { useAuth } from "@/lib/auth-context"
+import { supabase } from "@/lib/supabase-client"
 import {
   User,
   Mail,
@@ -126,12 +127,64 @@ export default function CheckoutPage() {
       return
     }
     setIsLoading(true)
-    // Simulate order processing
-    setTimeout(() => {
-      setIsLoading(false)
+    try {
+      const {
+        data: { user: authUser },
+        error: authError,
+      } = await supabase.auth.getUser()
+
+      if (authError || !authUser) {
+        throw new Error("You must be logged in to place an order.")
+      }
+
+      const shippingAddress = {
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        email: formData.email,
+        phone: formData.phone,
+        address: formData.address,
+        city: formData.city,
+        wilaya: formData.wilaya,
+        shippingMethod: formData.shippingMethod,
+        shippingFee: shipping,
+        paymentMethod: formData.paymentMethod,
+        subtotal,
+        total,
+      }
+
+      const itemsPayload = cartItems.map((item) => ({
+        lineId: item.id,
+        productId: item.productId,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+        shopId: item.shopId,
+        shopName: item.shopName,
+        color: item.color,
+        size: item.size,
+        image: item.image,
+      }))
+
+      const { error: insertError } = await supabase.from("orders").insert({
+        buyer_id: authUser.id,
+        shipping_address: shippingAddress,
+        delivery_instructions: null,
+        items_json: itemsPayload,
+        status: "pending",
+      })
+
+      if (insertError) {
+        throw insertError
+      }
+
       clearCart()
       router.push("/checkout/success")
-    }, 2000)
+    } catch (err: any) {
+      console.error(err)
+      alert(err?.message || "Failed to place order")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (

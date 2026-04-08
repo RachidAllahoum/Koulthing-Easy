@@ -26,18 +26,19 @@ export default function LoginPage() {
     setError("")
     setIsLoading(true)
     try {
-      const loggedInUser = await login(formData.email, formData.password)
-      
-      // Redirect based on user role
-      if (loggedInUser.role === "seller") {
-        router.push("/seller")
-      } else if (loggedInUser.role === "admin") {
-        router.push("/admin")
-      } else {
-        router.push("/profile")
-      }
+      const emailToSend = formData.email.trim().toLowerCase()
+      const passwordToSend = formData.password.trim()
+
+      console.log("[login.form] submitting credentials", {
+        email: emailToSend,
+        password: passwordToSend,
+      })
+
+      await login(emailToSend, passwordToSend)
+      router.push("/profile")
     } catch (err) {
-      setError("Invalid email or password")
+      console.error("[login.form] login failed", err)
+      setError(err instanceof Error ? err.message : "Invalid email or password")
     } finally {
       setIsLoading(false)
     }

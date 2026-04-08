@@ -10,6 +10,8 @@ export interface Article {
   image: string
   category?: string
   badge?: "suggested" | "bestselling" | "ad"
+  /** ISO timestamp from DB when available (used for sorting) */
+  createdAt?: string
 }
 
 export interface Shop {
@@ -64,7 +66,12 @@ export function filterArticles(
   // Sort
   switch (sortBy) {
     case "newest":
-      filtered.sort((a, b) => parseInt(b.id) - parseInt(a.id))
+      filtered.sort((a, b) => {
+        const ta = a.createdAt ? Date.parse(a.createdAt) : NaN
+        const tb = b.createdAt ? Date.parse(b.createdAt) : NaN
+        if (!Number.isNaN(ta) && !Number.isNaN(tb)) return tb - ta
+        return b.id.localeCompare(a.id)
+      })
       break
     case "price-asc":
       filtered.sort((a, b) => a.price - b.price)

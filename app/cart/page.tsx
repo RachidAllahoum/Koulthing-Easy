@@ -20,17 +20,16 @@ import {
 export default function CartPage() {
   const router = useRouter()
   const { items, updateQuantity, removeItem, total } = useCart()
-  const { isAuthenticated, user } = useAuth()
+  const { isAuthenticated, user, sellerMode } = useAuth()
 
   const shipping = total > 10000 ? 0 : 500
   const finalTotal = total + shipping
 
-  // Check if user can purchase (only buyers can purchase)
-  const canPurchase = !user || user.role === "buyer"
+  const canUseCart = isAuthenticated && user?.role === "buyer" && !sellerMode
 
   const handleCheckout = () => {
-    if (!canPurchase) {
-      alert("Admin and seller accounts cannot make purchases. Please use a buyer account.")
+    if (!canUseCart) {
+      alert("Only buyers can use shopping cart")
       return
     }
     if (!isAuthenticated) {
@@ -38,6 +37,27 @@ export default function CartPage() {
       return
     }
     router.push("/checkout")
+  }
+
+  if (!canUseCart) {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <Header />
+        <main className="flex-1 container mx-auto px-4 md:px-6 py-16 flex items-center justify-center">
+          <div className="max-w-md mx-auto text-center">
+            <h1 className="text-2xl font-bold text-foreground mb-2">Cart Unavailable</h1>
+            <p className="text-muted-foreground mb-6">Only buyers can use shopping cart</p>
+            <Button asChild size="lg" className="rounded-full gap-2">
+              <Link href="/articles">
+                Browse Products
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </Button>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    )
   }
 
   if (items.length === 0) {
@@ -119,7 +139,7 @@ export default function CartPage() {
                         </div>
                       </div>
                       <button
-                        onClick={() => removeItem(item.productId)}
+                        onClick={() => removeItem(item.id)}
                         className="p-2 hover:bg-secondary rounded-lg transition-colors text-muted-foreground hover:text-destructive"
                       >
                         <Trash2 className="w-5 h-5" />
@@ -130,7 +150,7 @@ export default function CartPage() {
                       {/* Quantity */}
                       <div className="flex items-center border border-border rounded-lg overflow-hidden">
                         <button
-                          onClick={() => updateQuantity(item.productId, item.quantity - 1)}
+                          onClick={() => updateQuantity(item.id, item.quantity - 1)}
                           className="w-9 h-9 flex items-center justify-center hover:bg-secondary transition-colors"
                         >
                           <Minus className="w-4 h-4" />
@@ -139,7 +159,7 @@ export default function CartPage() {
                           {item.quantity}
                         </span>
                         <button
-                          onClick={() => updateQuantity(item.productId, item.quantity + 1)}
+                          onClick={() => updateQuantity(item.id, item.quantity + 1)}
                           className="w-9 h-9 flex items-center justify-center hover:bg-secondary transition-colors"
                         >
                           <Plus className="w-4 h-4" />
@@ -186,17 +206,10 @@ export default function CartPage() {
                 </p>
               )}
 
-              {!canPurchase && (
-                <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-3 mb-2">
-                  {user?.role === "admin" ? "Admin" : "Seller"} accounts cannot make purchases. Please use a buyer account.
-                </p>
-              )}
-
               <Button 
                 size="lg" 
                 className="w-full rounded-full gap-2"
                 onClick={handleCheckout}
-                disabled={!canPurchase}
               >
                 Proceed to Checkout
                 <ArrowRight className="w-4 h-4" />

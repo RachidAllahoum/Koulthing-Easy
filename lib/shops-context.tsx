@@ -1,6 +1,7 @@
 "use client"
 
-import React, { createContext, useContext, useState, useEffect } from "react"
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
+import { supabase } from "@/lib/supabase-client"
 
 export interface Shop {
   id: string
@@ -18,191 +19,146 @@ export interface Shop {
   coverImage: string
   status: "pending" | "approved" | "rejected"
   createdAt: string
-  approvedAt?: string
-  approvedBy?: string
 }
 
 interface ShopsContextType {
   shops: Shop[]
-  createShop: (
-    name: string,
-    description: string,
-    category: string,
-    sellerId: string,
-    sellerName: string,
-    sellerEmail: string,
-    location: string
-  ) => Shop
-  approveShop: (shopId: string, adminId: string) => void
-  rejectShop: (shopId: string) => void
+  allShops: Shop[]
+  isLoading: boolean
+  fetchError: string | null
+  hasCatalogSnapshot: boolean
+  activeShopsCount: number
+  refresh: () => Promise<void>
   getShopById: (shopId: string) => Shop | undefined
   getApprovedShops: () => Shop[]
   getSellerShops: (sellerId: string) => Shop[]
-  getPendingShops: () => Shop[]
+  toggleShopActive: (shopId: string, isActive: boolean) => Promise<void>
 }
 
 const ShopsContext = createContext<ShopsContextType | undefined>(undefined)
 
-// Default shops
-const DEFAULT_SHOPS: Shop[] = [
-  {
-    id: "shop-1",
-    name: "Fashion House",
-    description: "Premium fashion and accessories for the modern lifestyle.",
-    category: "Fashion",
-    sellerId: "seller_1",
-    sellerName: "Sarah Fashion",
-    sellerEmail: "sarah@fashionhouse.com",
-    location: "Algiers",
-    rating: 4.8,
-    reviewCount: 324,
-    followers: 12500,
-    image: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=200&h=200&fit=crop",
-    coverImage: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=800&h=400&fit=crop",
-    status: "approved",
-    createdAt: "2024-01-15T10:00:00Z",
-    approvedAt: "2024-01-15T11:00:00Z",
-    approvedBy: "admin@koulthing.com",
-  },
-  {
-    id: "shop-2",
-    name: "Tech Gadgets",
-    description: "Latest electronics and gadgets.",
-    category: "Electronics",
-    sellerId: "seller_2",
-    sellerName: "Ahmed Tech",
-    sellerEmail: "ahmed@techgadgets.com",
-    location: "Oran",
-    rating: 4.6,
-    reviewCount: 189,
-    followers: 8900,
-    image: "https://images.unsplash.com/photo-1468495244123-6c6c332eeece?w=200&h=200&fit=crop",
-    coverImage: "https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=800&h=400&fit=crop",
-    status: "approved",
-    createdAt: "2024-02-01T10:00:00Z",
-    approvedAt: "2024-02-01T12:00:00Z",
-    approvedBy: "admin@koulthing.com",
-  },
-  {
-    id: "shop-3",
-    name: "Artisan Home",
-    description: "Handcrafted home decor and furniture.",
-    category: "Handmade",
-    sellerId: "seller_3",
-    sellerName: "Fatima Artisan",
-    sellerEmail: "fatima@artisanhome.com",
-    location: "Constantine",
-    rating: 4.9,
-    reviewCount: 156,
-    followers: 5600,
-    image: "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=200&h=200&fit=crop",
-    coverImage: "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=800&h=400&fit=crop",
-    status: "pending",
-    createdAt: "2024-03-10T10:00:00Z",
-  },
-]
+interface ShopRow {
+  id: string
+  seller_id: string
+  name: string
+  description: string | null
+  logo_url: string | null
+  created_at: string
+  is_active: boolean
+}
 
 export function ShopsProvider({ children }: { children: React.ReactNode }) {
-  const [shops, setShops] = useState<Shop[]>(DEFAULT_SHOPS)
+  const [dbShops, setDbShops] = useState<ShopRow[]>([])
+  const [profilesById, setProfilesById] = useState<Record<string, { full_name: string | null; email: string }>>({})
+  const [isLoading, setIsLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [hasCatalogSnapshot, setHasCatalogSnapshot] = useState(false)
 
-  // Load shops from localStorage on mount
-  useEffect(() => {
-    const savedShops = localStorage.getItem("shops_data")
-    if (savedShops) {
-      try {
-        setShops(JSON.parse(savedShops))
-      } catch (error) {
-        console.error("Failed to load shops:", error)
+  const refresh = useCallback(async () => {
+    console.log("[ShopsProvider] refresh shops START")
+    setIsLoading(true)
+    setFetchError(null)
+    try {
+      const { data: shopsRows, error: shopsError } = await supabase
+        .from("shops")
+        .select("id, seller_id, name, description, logo_url, created_at, is_active")
+        .order("created_at", { ascending: false })
+
+      if (shopsError) throw shopsError
+
+      const userIds = Array.from(new Set((shopsRows ?? []).map((row) => row.seller_id)))
+      let profileMap: Record<string, { full_name: string | null; email: string }> = {}
+
+      if (userIds.length > 0) {
+        const { data: profiles, error: profilesError } = await supabase
+          .from("profiles")
+          .select("id, full_name, email")
+          .in("id", userIds)
+
+        if (!profilesError) {
+          profileMap = (profiles ?? []).reduce(
+            (acc, row) => ({
+              ...acc,
+              [row.id]: { full_name: row.full_name, email: row.email },
+            }),
+            {},
+          )
+        } else {
+          console.warn("[ShopsProvider] profiles lookup failed", profilesError.message)
+        }
       }
+
+      setDbShops((shopsRows ?? []) as ShopRow[])
+      setProfilesById(profileMap)
+      setHasCatalogSnapshot(true)
+      console.log("[ShopsProvider] refresh shops DONE", { rows: shopsRows?.length ?? 0 })
+    } catch (error: unknown) {
+      const msg =
+        error !== null && typeof error === "object" && "message" in error
+          ? String((error as { message: unknown }).message)
+          : "Failed to load shops"
+      setFetchError(msg)
+      console.error("[ShopsProvider] refresh shops FAILED", error)
+    } finally {
+      setIsLoading(false)
     }
   }, [])
 
-  // Save shops to localStorage whenever they change
   useEffect(() => {
-    localStorage.setItem("shops_data", JSON.stringify(shops))
-  }, [shops])
+    void refresh()
+  }, [refresh])
 
-  const createShop = (
-    name: string,
-    description: string,
-    category: string,
-    sellerId: string,
-    sellerName: string,
-    sellerEmail: string,
-    location: string
-  ) => {
-    const newShop: Shop = {
-      id: `shop_${Date.now()}`,
-      name,
-      description,
-      category,
-      sellerId,
-      sellerName,
-      sellerEmail,
-      location,
+  const mapDbShopToShop = useCallback(
+    (row: ShopRow): Shop => ({
+      id: row.id,
+      name: row.name,
+      description: row.description ?? "",
+      category: "Shop",
+      sellerId: row.seller_id,
+      sellerName: profilesById[row.seller_id]?.full_name || "Seller",
+      sellerEmail: profilesById[row.seller_id]?.email || "",
+      location: "-",
       rating: 0,
       reviewCount: 0,
       followers: 0,
-      image: "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=200&h=200&fit=crop",
+      image:
+        row.logo_url ||
+        "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=200&h=200&fit=crop",
       coverImage: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800&h=400&fit=crop",
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    }
+      status: row.is_active ? "approved" : "rejected",
+      createdAt: row.created_at,
+    }),
+    [profilesById],
+  )
 
-    setShops((prev) => [...prev, newShop])
-    return newShop
-  }
+  const shops = useMemo(() => dbShops.map(mapDbShopToShop), [dbShops, mapDbShopToShop])
+  const allShops = shops
+  const activeShopsCount = useMemo(() => dbShops.filter((row) => row.is_active).length, [dbShops])
 
-  const approveShop = (shopId: string, adminId: string) => {
-    setShops((prev) =>
-      prev.map((shop) =>
-        shop.id === shopId
-          ? {
-              ...shop,
-              status: "approved",
-              approvedAt: new Date().toISOString(),
-              approvedBy: adminId,
-            }
-          : shop
-      )
-    )
-  }
+  const getShopById = (shopId: string) => shops.find((shop) => shop.id === shopId)
+  const getApprovedShops = () => shops.filter((shop) => shop.status === "approved")
+  const getSellerShops = (sellerId: string) => dbShops.filter((row) => row.seller_id === sellerId).map(mapDbShopToShop)
 
-  const rejectShop = (shopId: string) => {
-    setShops((prev) =>
-      prev.map((shop) =>
-        shop.id === shopId ? { ...shop, status: "rejected" } : shop
-      )
-    )
-  }
-
-  const getShopById = (shopId: string) => {
-    return shops.find((shop) => shop.id === shopId)
-  }
-
-  const getApprovedShops = () => {
-    return shops.filter((shop) => shop.status === "approved")
-  }
-
-  const getSellerShops = (sellerId: string) => {
-    return shops.filter((shop) => shop.sellerId === sellerId)
-  }
-
-  const getPendingShops = () => {
-    return shops.filter((shop) => shop.status === "pending")
+  const toggleShopActive = async (shopId: string, isActive: boolean) => {
+    const { error } = await supabase.from("shops").update({ is_active: isActive }).eq("id", shopId)
+    if (error) throw error
+    await refresh()
   }
 
   return (
     <ShopsContext.Provider
       value={{
         shops,
-        createShop,
-        approveShop,
-        rejectShop,
+        allShops,
+        isLoading,
+        fetchError,
+        hasCatalogSnapshot,
+        activeShopsCount,
+        refresh,
         getShopById,
         getApprovedShops,
         getSellerShops,
-        getPendingShops,
+        toggleShopActive,
       }}
     >
       {children}

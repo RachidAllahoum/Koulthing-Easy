@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { X, Plus, Trash2, Upload, Image as ImageIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -64,9 +64,11 @@ interface AddProductModalProps {
   isOpen: boolean
   onClose: () => void
   onSubmit: (product: ProductFormData) => void
+  mode?: "create" | "edit"
+  initialValues?: Partial<ProductFormData> & { name?: string; description?: string; price?: string; quantity?: string; category?: string }
 }
 
-export function AddProductModal({ isOpen, onClose, onSubmit }: AddProductModalProps) {
+export function AddProductModal({ isOpen, onClose, onSubmit, mode = "create", initialValues }: AddProductModalProps) {
   const [formData, setFormData] = useState<ProductFormData>({
     name: "",
     description: "",
@@ -80,16 +82,38 @@ export function AddProductModal({ isOpen, onClose, onSubmit }: AddProductModalPr
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [customColor, setCustomColor] = useState({ name: "", value: "#000000" })
 
+  useEffect(() => {
+    if (!isOpen) return
+    if (mode === "edit" && initialValues) {
+      setFormData({
+        name: initialValues.name || "",
+        description: initialValues.description || "",
+        price: initialValues.price || "",
+        category: initialValues.category || "",
+        colors: initialValues.colors || [],
+        sizes: initialValues.sizes || [],
+        quantity: initialValues.quantity || "",
+        images: initialValues.images || [],
+      })
+    }
+    if (mode === "create") {
+      resetForm()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, mode])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSubmitting(true)
 
     // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    await new Promise((resolve) => setTimeout(resolve, 400))
 
     onSubmit(formData)
     setIsSubmitting(false)
-    resetForm()
+    if (mode === "create") {
+      resetForm()
+    }
     onClose()
   }
 
@@ -165,9 +189,9 @@ export function AddProductModal({ isOpen, onClose, onSubmit }: AddProductModalPr
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-xl font-semibold">Add New Product</DialogTitle>
+          <DialogTitle className="text-xl font-semibold">{mode === "edit" ? "Edit Product" : "Add New Product"}</DialogTitle>
           <DialogDescription>
-            Fill in the details below to add a new product to your store.
+            {mode === "edit" ? "Update your product details below." : "Fill in the details below to add a new product to your store."}
           </DialogDescription>
         </DialogHeader>
 
@@ -406,7 +430,7 @@ export function AddProductModal({ isOpen, onClose, onSubmit }: AddProductModalPr
               className="rounded-xl gap-2"
               disabled={isSubmitting || !formData.name || !formData.price || !formData.category || !formData.quantity}
             >
-              {isSubmitting ? "Adding..." : "Add Product"}
+              {isSubmitting ? "Saving..." : mode === "edit" ? "Save Changes" : "Add Product"}
               {!isSubmitting && <Plus className="w-4 h-4" />}
             </Button>
           </div>

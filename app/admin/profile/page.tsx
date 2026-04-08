@@ -29,7 +29,7 @@ export default function AdminProfilePage() {
     phone: "+213 555 000 001",
   })
 
-  if (!user || user.role !== "admin") {
+  if (!user || !user.isAdmin) {
     router.push("/login")
     return null
   }

@@ -6,59 +6,25 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AddProductModal } from "@/components/add-product-modal"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/lib/auth-context"
+import { supabase } from "@/lib/supabase-client"
+import { useEffect } from "react"
+import { mapColorNameToSwatch } from "@/lib/products-map"
 
-const initialProducts = [
-  {
-    id: "1",
-    name: "Summer Dress with Floral Pattern",
-    category: "Fashion",
-    price: 4500,
-    stock: 15,
-    sold: 45,
-    status: "active",
-    image: "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=300&h=300&fit=crop",
-  },
-  {
-    id: "2",
-    name: "Leather Wallet Premium",
-    category: "Accessories",
-    price: 2800,
-    stock: 32,
-    sold: 38,
-    status: "active",
-    image: "https://images.unsplash.com/photo-1627123424574-724758594e93?w=300&h=300&fit=crop",
-  },
-  {
-    id: "3",
-    name: "Wireless Bluetooth Earbuds",
-    category: "Electronics",
-    price: 8900,
-    stock: 8,
-    sold: 32,
-    status: "low_stock",
-    image: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=300&h=300&fit=crop",
-  },
-  {
-    id: "4",
-    name: "Handmade Ceramic Vase Set",
-    category: "Home",
-    price: 3200,
-    stock: 0,
-    sold: 28,
-    status: "out_of_stock",
-    image: "https://images.unsplash.com/photo-1578500494198-246f612d3b3d?w=300&h=300&fit=crop",
-  },
-  {
-    id: "5",
-    name: "Vintage Watch Classic",
-    category: "Accessories",
-    price: 12000,
-    stock: 5,
-    sold: 12,
-    status: "active",
-    image: "https://images.unsplash.com/photo-1524592094714-0f0654e20314?w=300&h=300&fit=crop",
-  },
-]
+interface SellerProduct {
+  id: string
+  name: string
+  category: string
+  price: number
+  stock: number
+  sold: number
+  status: "active" | "low_stock" | "out_of_stock"
+  image: string
+  description: string
+  sizes: string[]
+  colors: string[]
+  images: string[]
+}
 
 function StatusBadge({ status }: { status: string }) {
   const styles = {
@@ -87,10 +53,67 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function SellerProductsPage() {
+  const { user } = useAuth()
   const [searchQuery, setSearchQuery] = useState("")
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
-  const [products, setProducts] = useState(initialProducts)
+  const [modalMode, setModalMode] = useState<"create" | "edit">("create")
+  const [editingProductId, setEditingProductId] = useState<string | null>(null)
+  const [products, setProducts] = useState<SellerProduct[]>([])
+  const [shopId, setShopId] = useState<string | null>(null)
   const { toast } = useToast()
+
+  const loadProducts = async () => {
+    if (!user) return
+    const { data: myShop, error: shopError } = await supabase
+      .from("shops")
+      .select("id")
+      .eq("seller_id", user.id)
+      .limit(1)
+      .maybeSingle()
+
+    if (shopError) {
+      toast({ title: "Failed loading shop", description: shopError.message, variant: "destructive" })
+      return
+    }
+    if (!myShop) {
+      setShopId(null)
+      setProducts([])
+      return
+    }
+    setShopId(myShop.id)
+
+    const { data, error } = await supabase
+      .from("products")
+      .select("id, name, description, price, stock, images_array, sizes_array, colors_array, created_at")
+      .eq("shop_id", myShop.id)
+      .order("created_at", { ascending: false })
+
+    if (error) {
+      toast({ title: "Failed loading products", description: error.message, variant: "destructive" })
+      return
+    }
+
+    const mapped = (data ?? []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      category: "Product",
+      price: Number(p.price),
+      stock: p.stock,
+      sold: 0,
+      status: p.stock > 10 ? "active" : p.stock > 0 ? "low_stock" : "out_of_stock",
+      image: p.images_array?.[0] || "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=300&h=300&fit=crop",
+      description: p.description || "",
+      sizes: p.sizes_array || [],
+      colors: p.colors_array || [],
+      images: p.images_array || [],
+    })) as SellerProduct[]
+    setProducts(mapped)
+  }
+
+  useEffect(() => {
+    loadProducts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id])
 
   const filteredProducts = products.filter((product) =>
     product.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -106,32 +129,81 @@ export default function SellerProductsPage() {
     quantity: string
     images: string[]
   }) => {
-    const newProduct = {
-      id: `${Date.now()}`,
-      name: productData.name,
-      category: productData.category,
-      price: parseInt(productData.price),
-      stock: parseInt(productData.quantity),
-      sold: 0,
-      status: parseInt(productData.quantity) > 10 ? "active" : parseInt(productData.quantity) > 0 ? "low_stock" : "out_of_stock",
-      image: productData.images[0] || "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=300&h=300&fit=crop",
-    }
-    setProducts([newProduct, ...products])
-    toast({
-      title: "Product Added",
-      description: `${productData.name} has been added to your store.`,
-    })
+    if (!shopId) return
+    ;(async () => {
+      if (modalMode === "edit" && editingProductId) {
+        const { error } = await supabase
+          .from("products")
+          .update({
+            name: productData.name,
+            description: productData.description,
+            price: parseFloat(productData.price),
+            sizes_array: productData.sizes,
+            colors_array: productData.colors.map((c) => c.name),
+            stock: parseInt(productData.quantity),
+            images_array: productData.images,
+          })
+          .eq("id", editingProductId)
+
+        if (error) {
+          toast({ title: "Update failed", description: error.message, variant: "destructive" })
+          return
+        }
+        await loadProducts()
+        toast({
+          title: "Product updated",
+          description: `${productData.name} has been saved.`,
+        })
+        setEditingProductId(null)
+        setModalMode("create")
+        return
+      }
+
+      const { error } = await supabase.from("products").insert({
+        shop_id: shopId,
+        name: productData.name,
+        description: productData.description,
+        price: parseFloat(productData.price),
+        sizes_array: productData.sizes,
+        colors_array: productData.colors.map((c) => c.name),
+        stock: parseInt(productData.quantity),
+        images_array: productData.images,
+      })
+
+      if (error) {
+        toast({ title: "Add failed", description: error.message, variant: "destructive" })
+        return
+      }
+      await loadProducts()
+      toast({
+        title: "Product Added",
+        description: `${productData.name} has been added to your store.`,
+      })
+    })()
   }
 
   return (
     <div className="p-6 lg:p-8">
+      {!shopId && (
+        <div className="mb-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-sm text-foreground">
+          No shop found for your account. Products are tied to the shop created when your seller application is approved.
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Products</h1>
           <p className="text-muted-foreground">Manage your product inventory</p>
         </div>
-        <Button className="rounded-xl gap-2" onClick={() => setIsAddModalOpen(true)}>
+        <Button
+          className="rounded-xl gap-2"
+          disabled={!shopId}
+          onClick={() => {
+            setModalMode("create")
+            setEditingProductId(null)
+            setIsAddModalOpen(true)
+          }}
+        >
           <Plus className="w-4 h-4" />
           Add Product
         </Button>
@@ -197,10 +269,34 @@ export default function SellerProductsPage() {
                 <Button size="sm" variant="secondary" className="rounded-lg">
                   <Eye className="w-4 h-4" />
                 </Button>
-                <Button size="sm" variant="secondary" className="rounded-lg">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="rounded-lg"
+                  onClick={() => {
+                    const full = products.find((p) => p.id === product.id)
+                    if (!full) return
+                    setModalMode("edit")
+                    setEditingProductId(full.id)
+                    setIsAddModalOpen(true)
+                  }}
+                >
                   <Edit className="w-4 h-4" />
                 </Button>
-                <Button size="sm" variant="secondary" className="rounded-lg">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="rounded-lg"
+                  onClick={async () => {
+                    const { error } = await supabase.from("products").delete().eq("id", product.id)
+                    if (error) {
+                      toast({ title: "Delete failed", description: error.message, variant: "destructive" })
+                      return
+                    }
+                    await loadProducts()
+                    toast({ title: "Product deleted", description: `${product.name} removed.` })
+                  }}
+                >
                   <Trash2 className="w-4 h-4" />
                 </Button>
               </div>
@@ -242,8 +338,31 @@ export default function SellerProductsPage() {
       {/* Add Product Modal */}
       <AddProductModal
         isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
+        onClose={() => {
+          setIsAddModalOpen(false)
+          setEditingProductId(null)
+          setModalMode("create")
+        }}
         onSubmit={handleAddProduct}
+        mode={modalMode}
+        initialValues={
+          modalMode === "edit" && editingProductId
+            ? (() => {
+                const p = products.find((x) => x.id === editingProductId)
+                if (!p) return undefined
+                return {
+                  name: p.name,
+                  description: p.description,
+                  price: String(p.price),
+                  category: p.category === "Product" ? "Other" : p.category,
+                  sizes: p.sizes,
+                  colors: p.colors.map((c) => mapColorNameToSwatch(c)),
+                  quantity: String(p.stock),
+                  images: p.images,
+                }
+              })()
+            : undefined
+        }
       />
     </div>
   )

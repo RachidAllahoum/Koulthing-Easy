@@ -6,49 +6,20 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AddReelModal } from "@/components/add-reel-modal"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/lib/auth-context"
+import { supabase } from "@/lib/supabase-client"
+import { useEffect } from "react"
 
-const initialReels = [
-  {
-    id: "1",
-    title: "Summer Collection Preview",
-    thumbnail: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=300&h=533&fit=crop",
-    views: 12500,
-    likes: 1234,
-    comments: 89,
-    status: "published",
-    createdAt: "2024-03-10",
-  },
-  {
-    id: "2",
-    title: "How to Style Our Best Seller",
-    thumbnail: "https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?w=300&h=533&fit=crop",
-    views: 8900,
-    likes: 856,
-    comments: 45,
-    status: "published",
-    createdAt: "2024-03-08",
-  },
-  {
-    id: "3",
-    title: "Behind the Scenes",
-    thumbnail: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=300&h=533&fit=crop",
-    views: 15600,
-    likes: 2103,
-    comments: 156,
-    status: "published",
-    createdAt: "2024-03-05",
-  },
-  {
-    id: "4",
-    title: "New Arrivals Unboxing",
-    thumbnail: "https://images.unsplash.com/photo-1468495244123-6c6c332eeece?w=300&h=533&fit=crop",
-    views: 6700,
-    likes: 945,
-    comments: 67,
-    status: "draft",
-    createdAt: "2024-03-03",
-  },
-]
+interface SellerReel {
+  id: string
+  title: string
+  thumbnail: string
+  views: number
+  likes: number
+  comments: number
+  status: string
+  createdAt: string
+}
 
 function StatusBadge({ status }: { status: string }) {
   const styles = {
@@ -82,10 +53,55 @@ function formatNumber(num: number): string {
 }
 
 export default function SellerReelsPage() {
+  const { user } = useAuth()
   const [searchQuery, setSearchQuery] = useState("")
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
-  const [reels, setReels] = useState(initialReels)
+  const [reels, setReels] = useState<SellerReel[]>([])
+  const [shopId, setShopId] = useState<string | null>(null)
   const { toast } = useToast()
+
+  const loadReels = async () => {
+    if (!user) return
+    const { data: myShop } = await supabase
+      .from("shops")
+      .select("id")
+      .eq("seller_id", user.id)
+      .limit(1)
+      .maybeSingle()
+    if (!myShop) {
+      setShopId(null)
+      setReels([])
+      return
+    }
+    setShopId(myShop.id)
+
+    const { data, error } = await supabase
+      .from("reels")
+      .select("id, video_url, likes_count, views_count, created_at")
+      .eq("shop_id", myShop.id)
+      .order("created_at", { ascending: false })
+    if (error) {
+      toast({ title: "Failed loading reels", description: error.message, variant: "destructive" })
+      return
+    }
+    setReels(
+      (data ?? []).map((r) => ({
+        id: r.id,
+        title: "Shop Reel",
+        thumbnail: r.video_url,
+        views: r.views_count,
+        likes: r.likes_count,
+        comments: 0,
+        status: "published",
+        createdAt: r.created_at.split("T")[0],
+      }))
+    )
+  }
+
+  useEffect(() => {
+    loadReels()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id])
 
   const filteredReels = reels.filter((reel) =>
     reel.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -98,29 +114,39 @@ export default function SellerReelsPage() {
     thumbnail: string
     videoUrl: string
   }) => {
-    const newReel = {
-      id: `${Date.now()}`,
-      title: reelData.title,
-      thumbnail: reelData.thumbnail || "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=300&h=533&fit=crop",
-      views: 0,
-      likes: 0,
-      comments: 0,
-      status: "processing",
-      createdAt: new Date().toISOString().split("T")[0],
-    }
-    setReels([newReel, ...reels])
-    toast({
-      title: "Reel Uploaded",
-      description: `${reelData.title} is being processed and will appear in the videos section soon.`,
-    })
+    if (!shopId) return
+    ;(async () => {
+      const { error } = await supabase.from("reels").insert({
+        shop_id: shopId,
+        video_url: reelData.videoUrl || reelData.thumbnail,
+        likes_count: 0,
+        views_count: 0,
+      })
+      if (error) {
+        toast({ title: "Upload failed", description: error.message, variant: "destructive" })
+        return
+      }
+      await loadReels()
+      toast({
+        title: "Reel Uploaded",
+        description: `${reelData.title} is now saved.`,
+      })
+    })()
   }
 
   const handleDeleteReel = (id: string) => {
-    setReels(reels.filter((r) => r.id !== id))
-    toast({
-      title: "Reel Deleted",
-      description: "The reel has been removed.",
-    })
+    ;(async () => {
+      const { error } = await supabase.from("reels").delete().eq("id", id)
+      if (error) {
+        toast({ title: "Delete failed", description: error.message, variant: "destructive" })
+        return
+      }
+      await loadReels()
+      toast({
+        title: "Reel Deleted",
+        description: "The reel has been removed.",
+      })
+    })()
   }
 
   const totalViews = reels.reduce((sum, r) => sum + r.views, 0)
@@ -129,13 +155,18 @@ export default function SellerReelsPage() {
 
   return (
     <div className="p-6 lg:p-8">
+      {!shopId && (
+        <div className="mb-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-sm text-foreground">
+          No shop found for your account. Reels are tied to your approved shop.
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Reels</h1>
           <p className="text-muted-foreground">Create and manage your short videos</p>
         </div>
-        <Button className="rounded-xl gap-2" onClick={() => setIsAddModalOpen(true)}>
+        <Button className="rounded-xl gap-2" disabled={!shopId} onClick={() => setIsAddModalOpen(true)}>
           <Plus className="w-4 h-4" />
           Upload Reel
         </Button>

@@ -1,12 +1,12 @@
 "use client"
 
-import { useState } from "react"
-import { 
-  Store, 
-  Camera, 
-  Globe, 
-  Instagram, 
-  Facebook, 
+import { useEffect, useState } from "react"
+import {
+  Store,
+  Camera,
+  Globe,
+  Instagram,
+  Facebook,
   Twitter,
   MapPin,
   Phone,
@@ -16,10 +16,13 @@ import {
   Package,
   Calendar,
   Users,
-  Star
+  Star,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useAuth } from "@/lib/auth-context"
+import { supabase } from "@/lib/supabase-client"
+import { useToast } from "@/hooks/use-toast"
 
 interface ShopData {
   name: string
@@ -35,57 +38,124 @@ interface ShopData {
   twitter: string
 }
 
-const initialShopData: ShopData = {
-  name: "Fashion House",
-  description: "Premium fashion boutique offering the latest trends in clothing, accessories, and lifestyle products. We believe in quality and style that speaks to the modern individual.",
+const emptyShopData: ShopData = {
+  name: "",
+  description: "",
   logo: "",
   banner: "",
-  address: "123 Main Street, Algiers, Algeria",
-  phone: "+213 555 123 456",
-  email: "contact@fashionhouse.dz",
-  website: "www.fashionhouse.dz",
-  instagram: "@fashionhouse.dz",
-  facebook: "FashionHouseDZ",
-  twitter: "@FashionHouseDZ",
+  address: "",
+  phone: "",
+  email: "",
+  website: "",
+  instagram: "",
+  facebook: "",
+  twitter: "",
 }
-
-const shopStats = {
-  totalProducts: 48,
-  totalEvents: 3,
-  followers: 12500,
-  rating: 4.8,
-  totalOrders: 1250,
-  totalRevenue: 2450000,
-}
-
-const recentProducts = [
-  { name: "Summer Dress", price: 4500, sold: 45 },
-  { name: "Leather Wallet", price: 2800, sold: 38 },
-  { name: "Wireless Earbuds", price: 8900, sold: 32 },
-  { name: "Ceramic Vase", price: 3200, sold: 28 },
-]
-
-const activeEvents = [
-  { name: "Spring Sale 2024", discount: 30, endDate: "2024-03-31" },
-  { name: "Ramadan Special", discount: 25, endDate: "2024-04-09" },
-]
 
 export default function SellerShopPage() {
+  const { user } = useAuth()
+  const { toast } = useToast()
+  const [loading, setLoading] = useState(true)
+  const [shopRowId, setShopRowId] = useState<string | null>(null)
+  const [productCount, setProductCount] = useState(0)
   const [isEditing, setIsEditing] = useState(false)
-  const [shopData, setShopData] = useState(initialShopData)
+  const [shopData, setShopData] = useState<ShopData>(emptyShopData)
 
-  const handleSave = () => {
+  useEffect(() => {
+    const load = async () => {
+      if (!user) {
+        setLoading(false)
+        return
+      }
+      setLoading(true)
+      const { data: shop, error } = await supabase
+        .from("shops")
+        .select("id, name, description, logo_url, created_at")
+        .eq("seller_id", user.id)
+        .maybeSingle()
+
+      if (error) {
+        console.error(error)
+        setShopRowId(null)
+        setShopData(emptyShopData)
+        setLoading(false)
+        return
+      }
+
+      if (!shop) {
+        setShopRowId(null)
+        setShopData(emptyShopData)
+        setProductCount(0)
+        setLoading(false)
+        return
+      }
+
+      setShopRowId(shop.id)
+      setShopData({
+        ...emptyShopData,
+        name: shop.name,
+        description: shop.description ?? "",
+        logo: shop.logo_url ?? "",
+      })
+
+      const { count } = await supabase
+        .from("products")
+        .select("id", { count: "exact", head: true })
+        .eq("shop_id", shop.id)
+      setProductCount(count ?? 0)
+      setLoading(false)
+    }
+
+    load()
+  }, [user?.id])
+
+  const handleSave = async () => {
+    if (!shopRowId || !user) {
+      setIsEditing(false)
+      return
+    }
+    const { error } = await supabase
+      .from("shops")
+      .update({
+        name: shopData.name,
+        description: shopData.description,
+      })
+      .eq("id", shopRowId)
+      .eq("seller_id", user.id)
+
+    if (error) {
+      toast({ title: "Save failed", description: error.message, variant: "destructive" })
+      return
+    }
     setIsEditing(false)
-    // Save logic would go here
+    toast({ title: "Shop updated", description: "Your shop details were saved." })
+  }
+
+  if (loading) {
+    return (
+      <div className="p-6 lg:p-8">
+        <p className="text-sm text-muted-foreground">Loading your shop…</p>
+      </div>
+    )
+  }
+
+  if (!shopRowId) {
+    return (
+      <div className="p-6 lg:p-8">
+        <h1 className="text-2xl font-bold text-foreground mb-2">My Shop</h1>
+        <p className="text-muted-foreground max-w-md">
+          No shop found for your account. This usually appears after an admin approves your seller application and a shop row is created for your user.
+        </p>
+      </div>
+    )
   }
 
   return (
     <div className="p-6 lg:p-8">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-foreground">My Shop</h1>
-          <p className="text-muted-foreground">Manage your shop profile and settings</p>
+          <p className="text-muted-foreground">Manage your shop profile (data from your approved application)</p>
         </div>
         {isEditing ? (
           <Button className="rounded-xl gap-2" onClick={handleSave}>
@@ -101,13 +171,15 @@ export default function SellerShopPage() {
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
-        {/* Shop Profile */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Banner & Logo */}
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="relative h-40 bg-gradient-to-r from-primary/20 to-accent/20">
               {isEditing && (
-                <button className="absolute right-4 top-4 p-2 bg-card/80 backdrop-blur rounded-lg hover:bg-card transition-colors">
+                <button
+                  type="button"
+                  className="absolute right-4 top-4 p-2 bg-card/80 backdrop-blur rounded-lg hover:bg-card transition-colors opacity-50 cursor-not-allowed"
+                  title="Banner upload coming soon"
+                >
                   <Camera className="w-5 h-5 text-foreground" />
                 </button>
               )}
@@ -115,18 +187,26 @@ export default function SellerShopPage() {
             <div className="px-6 pb-6">
               <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-12">
                 <div className="relative">
-                  <div className="w-24 h-24 rounded-xl bg-secondary border-4 border-card flex items-center justify-center">
-                    <Store className="w-10 h-10 text-muted-foreground" />
+                  <div className="w-24 h-24 rounded-xl bg-secondary border-4 border-card flex items-center justify-center overflow-hidden">
+                    {shopData.logo ? (
+                      <img src={shopData.logo} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <Store className="w-10 h-10 text-muted-foreground" />
+                    )}
                   </div>
                   {isEditing && (
-                    <button className="absolute -right-1 -bottom-1 p-1.5 bg-primary text-primary-foreground rounded-lg">
+                    <button
+                      type="button"
+                      className="absolute -right-1 -bottom-1 p-1.5 bg-primary text-primary-foreground rounded-lg opacity-50 cursor-not-allowed"
+                      title="Logo upload coming soon"
+                    >
                       <Camera className="w-4 h-4" />
                     </button>
                   )}
                 </div>
                 <div className="flex-1">
                   {isEditing ? (
-                    <Input 
+                    <Input
                       value={shopData.name}
                       onChange={(e) => setShopData({ ...shopData, name: e.target.value })}
                       className="text-xl font-bold h-11 rounded-xl"
@@ -137,26 +217,21 @@ export default function SellerShopPage() {
                   <div className="flex items-center gap-2 mt-1">
                     <div className="flex items-center gap-1 text-amber-500">
                       <Star className="w-4 h-4 fill-current" />
-                      <span className="text-sm font-medium">{shopStats.rating}</span>
+                      <span className="text-sm font-medium">—</span>
                     </div>
                     <span className="text-muted-foreground">|</span>
-                    <span className="text-sm text-muted-foreground">
-                      {shopStats.followers.toLocaleString()} followers
-                    </span>
+                    <span className="text-sm text-muted-foreground">Followers —</span>
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Shop Details */}
           <div className="bg-card border border-border rounded-xl p-6">
             <h3 className="font-semibold text-foreground mb-4">Shop Details</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-2">
-                  Description
-                </label>
+                <label className="block text-sm font-medium text-muted-foreground mb-2">Description</label>
                 {isEditing ? (
                   <textarea
                     value={shopData.description}
@@ -164,9 +239,13 @@ export default function SellerShopPage() {
                     className="w-full min-h-[100px] px-4 py-3 rounded-xl bg-background border border-input text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
                   />
                 ) : (
-                  <p className="text-foreground">{shopData.description}</p>
+                  <p className="text-foreground">{shopData.description || "No description yet."}</p>
                 )}
               </div>
+
+              <p className="text-xs text-muted-foreground">
+                Contact fields below are optional and stored only in this form until you add columns in the database.
+              </p>
 
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
@@ -175,13 +254,13 @@ export default function SellerShopPage() {
                     Address
                   </label>
                   {isEditing ? (
-                    <Input 
+                    <Input
                       value={shopData.address}
                       onChange={(e) => setShopData({ ...shopData, address: e.target.value })}
                       className="h-11 rounded-xl"
                     />
                   ) : (
-                    <p className="text-foreground">{shopData.address}</p>
+                    <p className="text-foreground">{shopData.address || "—"}</p>
                   )}
                 </div>
                 <div>
@@ -190,13 +269,13 @@ export default function SellerShopPage() {
                     Phone
                   </label>
                   {isEditing ? (
-                    <Input 
+                    <Input
                       value={shopData.phone}
                       onChange={(e) => setShopData({ ...shopData, phone: e.target.value })}
                       className="h-11 rounded-xl"
                     />
                   ) : (
-                    <p className="text-foreground">{shopData.phone}</p>
+                    <p className="text-foreground">{shopData.phone || "—"}</p>
                   )}
                 </div>
                 <div>
@@ -205,13 +284,13 @@ export default function SellerShopPage() {
                     Email
                   </label>
                   {isEditing ? (
-                    <Input 
+                    <Input
                       value={shopData.email}
                       onChange={(e) => setShopData({ ...shopData, email: e.target.value })}
                       className="h-11 rounded-xl"
                     />
                   ) : (
-                    <p className="text-foreground">{shopData.email}</p>
+                    <p className="text-foreground">{shopData.email || "—"}</p>
                   )}
                 </div>
                 <div>
@@ -220,20 +299,19 @@ export default function SellerShopPage() {
                     Website
                   </label>
                   {isEditing ? (
-                    <Input 
+                    <Input
                       value={shopData.website}
                       onChange={(e) => setShopData({ ...shopData, website: e.target.value })}
                       className="h-11 rounded-xl"
                     />
                   ) : (
-                    <p className="text-foreground">{shopData.website}</p>
+                    <p className="text-foreground">{shopData.website || "—"}</p>
                   )}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Social Links */}
           <div className="bg-card border border-border rounded-xl p-6">
             <h3 className="font-semibold text-foreground mb-4">Social Links</h3>
             <div className="grid sm:grid-cols-3 gap-4">
@@ -243,13 +321,13 @@ export default function SellerShopPage() {
                   Instagram
                 </label>
                 {isEditing ? (
-                  <Input 
+                  <Input
                     value={shopData.instagram}
                     onChange={(e) => setShopData({ ...shopData, instagram: e.target.value })}
                     className="h-11 rounded-xl"
                   />
                 ) : (
-                  <p className="text-foreground">{shopData.instagram}</p>
+                  <p className="text-foreground">{shopData.instagram || "—"}</p>
                 )}
               </div>
               <div>
@@ -258,13 +336,13 @@ export default function SellerShopPage() {
                   Facebook
                 </label>
                 {isEditing ? (
-                  <Input 
+                  <Input
                     value={shopData.facebook}
                     onChange={(e) => setShopData({ ...shopData, facebook: e.target.value })}
                     className="h-11 rounded-xl"
                   />
                 ) : (
-                  <p className="text-foreground">{shopData.facebook}</p>
+                  <p className="text-foreground">{shopData.facebook || "—"}</p>
                 )}
               </div>
               <div>
@@ -273,22 +351,20 @@ export default function SellerShopPage() {
                   Twitter
                 </label>
                 {isEditing ? (
-                  <Input 
+                  <Input
                     value={shopData.twitter}
                     onChange={(e) => setShopData({ ...shopData, twitter: e.target.value })}
                     className="h-11 rounded-xl"
                   />
                 ) : (
-                  <p className="text-foreground">{shopData.twitter}</p>
+                  <p className="text-foreground">{shopData.twitter || "—"}</p>
                 )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Sidebar */}
         <div className="space-y-6">
-          {/* Stats */}
           <div className="bg-card border border-border rounded-xl p-6">
             <h3 className="font-semibold text-foreground mb-4">Shop Stats</h3>
             <div className="space-y-4">
@@ -299,7 +375,7 @@ export default function SellerShopPage() {
                   </div>
                   <span className="text-sm text-muted-foreground">Products</span>
                 </div>
-                <span className="font-semibold text-foreground">{shopStats.totalProducts}</span>
+                <span className="font-semibold text-foreground">{productCount}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -308,7 +384,7 @@ export default function SellerShopPage() {
                   </div>
                   <span className="text-sm text-muted-foreground">Events</span>
                 </div>
-                <span className="font-semibold text-foreground">{shopStats.totalEvents}</span>
+                <span className="font-semibold text-foreground">—</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -317,43 +393,14 @@ export default function SellerShopPage() {
                   </div>
                   <span className="text-sm text-muted-foreground">Followers</span>
                 </div>
-                <span className="font-semibold text-foreground">{shopStats.followers.toLocaleString()}</span>
+                <span className="font-semibold text-foreground">—</span>
               </div>
             </div>
           </div>
 
-          {/* Recent Products */}
           <div className="bg-card border border-border rounded-xl p-6">
             <h3 className="font-semibold text-foreground mb-4">Top Products</h3>
-            <div className="space-y-3">
-              {recentProducts.map((product, index) => (
-                <div key={index} className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{product.name}</p>
-                    <p className="text-xs text-muted-foreground">{product.sold} sold</p>
-                  </div>
-                  <span className="text-sm font-medium text-foreground">
-                    {product.price.toLocaleString()} DZD
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Active Events */}
-          <div className="bg-card border border-border rounded-xl p-6">
-            <h3 className="font-semibold text-foreground mb-4">Active Events</h3>
-            <div className="space-y-3">
-              {activeEvents.map((event, index) => (
-                <div key={index} className="p-3 bg-secondary/50 rounded-xl">
-                  <p className="text-sm font-medium text-foreground">{event.name}</p>
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="text-xs text-muted-foreground">Ends {event.endDate}</span>
-                    <span className="text-xs font-medium text-accent">{event.discount}% off</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <p className="text-sm text-muted-foreground">Product sales stats will appear here when order data is connected.</p>
           </div>
         </div>
       </div>

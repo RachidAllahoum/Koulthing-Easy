@@ -10,11 +10,10 @@ import { ProfileDropdown } from "@/components/profile-dropdown"
 
 export function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const { isAuthenticated, user } = useAuth()
+  const { isAuthenticated, user, sellerMode, setSellerMode } = useAuth()
   const { itemCount } = useCart()
 
-  // Check if user can purchase (only buyers can)
-  const canPurchase = !user || user.role === "buyer"
+  const canUseCart = isAuthenticated && user?.role === "buyer" && !sellerMode
 
   return (
     <header className="sticky top-0 z-50 w-full bg-background/80 backdrop-blur-md border-b border-border">
@@ -48,7 +47,7 @@ export function Header() {
         {/* Desktop CTA */}
         <div className="hidden md:flex items-center gap-4">
           {/* Cart Icon - Only show for buyers */}
-          {canPurchase && (
+          {canUseCart && (
             <Link
               href="/cart"
               className="relative p-2 text-muted-foreground hover:text-foreground transition-colors"
@@ -65,20 +64,30 @@ export function Header() {
           
           {isAuthenticated ? (
             <>
-              {user?.role === "admin" && (
+              {user?.isSeller && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSellerMode(!sellerMode)}
+                    className="text-xs font-medium px-3 py-2 rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors"
+                  >
+                    {sellerMode ? "Seller Mode" : "Buyer Mode"}
+                  </button>
+                  {sellerMode && (
+                    <Link
+                      href="/seller"
+                      className="text-xs font-medium px-3 py-2 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                    >
+                      Dashboard
+                    </Link>
+                  )}
+                </div>
+              )}
+              {user?.isAdmin && (
                 <Link
-                  href="/admin/shop-approvals"
+                  href="/admin"
                   className="text-sm font-medium text-amber-600 hover:text-amber-700 transition-colors px-3 py-2 rounded-full bg-amber-100/20"
                 >
                   Admin Panel
-                </Link>
-              )}
-              {user?.role === "seller" && (
-                <Link
-                  href="/seller"
-                  className="text-sm font-medium text-primary hover:text-primary/80 transition-colors px-3 py-2 rounded-full bg-primary/10"
-                >
-                  Seller Dashboard
                 </Link>
               )}
               <ProfileDropdown />
@@ -130,7 +139,7 @@ export function Header() {
             >
               Shops
             </Link>
-            {canPurchase && (
+            {canUseCart && (
               <Link
                 href="/cart"
                 className="text-base font-medium text-foreground transition-colors hover:text-muted-foreground flex items-center gap-2"

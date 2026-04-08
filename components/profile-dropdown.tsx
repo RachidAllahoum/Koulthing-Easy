@@ -4,8 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
-import { Button } from "@/components/ui/button"
-import { LogOut, Settings, User, BarChart3, ShoppingBag } from "lucide-react"
+import { LogOut, Settings, User, ShoppingBag, Shield } from "lucide-react"
 
 export function ProfileDropdown() {
   const router = useRouter()
@@ -14,31 +13,18 @@ export function ProfileDropdown() {
 
   if (!user) return null
 
-  const handleLogout = () => {
-    logout()
+  const handleLogout = async () => {
+    await logout()
     setIsOpen(false)
     router.push("/")
   }
 
-  const profileLinks = {
-    admin: [
-      { href: "/admin", icon: BarChart3, label: "Admin Dashboard" },
-      { href: "/profile", icon: User, label: "My Profile" },
-      { href: "/profile/settings", icon: Settings, label: "Settings" },
-    ],
-    seller: [
-      { href: "/seller", icon: BarChart3, label: "Seller Dashboard" },
-      { href: "/profile", icon: User, label: "My Profile" },
-      { href: "/profile/settings", icon: Settings, label: "Settings" },
-    ],
-    buyer: [
-      { href: "/profile", icon: User, label: "My Profile" },
-      { href: "/profile/orders", icon: ShoppingBag, label: "My Orders" },
-      { href: "/profile/settings", icon: Settings, label: "Settings" },
-    ],
-  }
-
-  const links = profileLinks[user.role]
+  const links = [
+    ...(user.isAdmin ? [{ href: "/admin", icon: Shield, label: "Admin Panel" }] : []),
+    { href: "/profile", icon: User, label: "My Profile" },
+    { href: "/profile/orders", icon: ShoppingBag, label: "My Orders" },
+    { href: "/profile/settings", icon: Settings, label: "Settings" },
+  ]
 
   return (
     <div className="relative">
@@ -55,8 +41,8 @@ export function ProfileDropdown() {
           <div className="px-4 py-3 border-b border-border mb-2">
             <p className="font-semibold text-foreground text-sm">{user.name}</p>
             <p className="text-xs text-muted-foreground">{user.email}</p>
-            <span className="inline-block mt-2 px-2 py-1 bg-primary/10 text-primary text-xs font-medium rounded-full capitalize">
-              {user.role}
+            <span className="inline-block mt-2 px-2 py-1 bg-primary/10 text-primary text-xs font-medium rounded-full">
+              Account
             </span>
           </div>
 

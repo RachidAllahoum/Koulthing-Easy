@@ -1,6 +1,7 @@
 "use client"
 
-import React, { createContext, useContext, useState, useEffect } from "react"
+import React, { createContext, useContext, useRef, useState } from "react"
+import { supabase } from "@/lib/supabase-client"
 
 export interface VideoReel {
   id: string
@@ -18,116 +19,161 @@ export interface VideoReel {
 
 interface ReelsContextType {
   reels: VideoReel[]
-  addReel: (reel: Omit<VideoReel, "id" | "likes" | "comments" | "views" | "createdAt">) => void
-  removeReel: (id: string) => void
+  addReel: (reel: Omit<VideoReel, "id" | "likes" | "comments" | "views" | "createdAt">) => Promise<void>
+  removeReel: (id: string) => Promise<void>
+  incrementViews: (id: string) => Promise<void>
+  incrementLikes: (id: string) => Promise<void>
+  /** When shopId is passed, only that shop's reels are loaded */
+  refreshReels: (shopId?: string) => Promise<void>
 }
 
 const ReelsContext = createContext<ReelsContextType | undefined>(undefined)
 
-const defaultReels: VideoReel[] = [
-  {
-    id: "1",
-    thumbnail: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=300&h=533&fit=crop",
-    title: "Summer Collection Preview",
-    shopName: "Fashion House",
-    shopId: "shop-1",
-    likes: 1234,
-    comments: 89,
-    views: 12500,
-    createdAt: "2024-03-10",
-  },
-  {
-    id: "2",
-    thumbnail: "https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?w=300&h=533&fit=crop",
-    title: "Handmade Jewelry Tutorial",
-    shopName: "Artisan Gems",
-    shopId: "shop-2",
-    likes: 856,
-    comments: 45,
-    views: 8900,
-    createdAt: "2024-03-08",
-  },
-  {
-    id: "3",
-    thumbnail: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=300&h=533&fit=crop",
-    title: "Behind the Scenes",
-    shopName: "Urban Style",
-    shopId: "shop-3",
-    likes: 2103,
-    comments: 156,
-    views: 15600,
-    createdAt: "2024-03-05",
-  },
-  {
-    id: "4",
-    thumbnail: "https://images.unsplash.com/photo-1468495244123-6c6c332eeece?w=300&h=533&fit=crop",
-    title: "New Arrivals Unboxing",
-    shopName: "Tech Gadgets",
-    shopId: "shop-4",
-    likes: 945,
-    comments: 67,
-    views: 6700,
-    createdAt: "2024-03-03",
-  },
-  {
-    id: "5",
-    thumbnail: "https://images.unsplash.com/photo-1487222477894-8943e31ef7b2?w=300&h=533&fit=crop",
-    title: "Styling Tips",
-    shopName: "Chic Boutique",
-    shopId: "shop-5",
-    likes: 1567,
-    comments: 98,
-    views: 9800,
-    createdAt: "2024-03-01",
-  },
-]
-
 export function ReelsProvider({ children }: { children: React.ReactNode }) {
-  const [reels, setReels] = useState<VideoReel[]>(defaultReels)
-  const [isLoaded, setIsLoaded] = useState(false)
+  const [reels, setReels] = useState<VideoReel[]>([])
+  /** Avoid duplicate view-count bumps from hover replay on the same reel in one session */
+  const viewedIds = useRef(new Set<string>())
+  const lastShopFilter = useRef<string | undefined>(undefined)
 
-  // Load reels from localStorage on mount
-  useEffect(() => {
-    const savedReels = localStorage.getItem("platform_reels")
-    if (savedReels) {
-      try {
-        const parsed = JSON.parse(savedReels)
-        setReels([...parsed, ...defaultReels])
-      } catch (error) {
-        console.error("Failed to load reels from localStorage", error)
+  const refreshReels = async (shopId?: string) => {
+    lastShopFilter.current = shopId
+    if (shopId) {
+      viewedIds.current.clear()
+    }
+
+    let attemptJoin = supabase
+      .from("reels")
+      .select("id, shop_id, video_url, likes_count, views_count, created_at, shops(name)")
+      .order("created_at", { ascending: false })
+      .limit(40)
+
+    if (shopId) {
+      attemptJoin = attemptJoin.eq("shop_id", shopId)
+    }
+
+    const attemptJoinResult = await attemptJoin
+
+    let rows: any[] | null = attemptJoinResult.data
+    let loadError = attemptJoinResult.error
+
+    if (loadError) {
+      let fallback = supabase
+        .from("reels")
+        .select("id, shop_id, video_url, likes_count, views_count, created_at")
+        .order("created_at", { ascending: false })
+        .limit(40)
+
+      if (shopId) {
+        fallback = fallback.eq("shop_id", shopId)
       }
-    }
-    setIsLoaded(true)
-  }, [])
 
-  // Save custom reels to localStorage
-  useEffect(() => {
-    if (isLoaded) {
-      const customReels = reels.filter(
-        (r) => !defaultReels.find((dr) => dr.id === r.id)
+      const fallbackResult = await fallback
+      rows = fallbackResult.data
+      loadError = fallbackResult.error
+    }
+
+    if (loadError) {
+      console.error("Failed to load reels", loadError)
+      return
+    }
+
+    const shopIds = Array.from(new Set((rows ?? []).map((r) => r.shop_id).filter(Boolean)))
+    let shopNames: Record<string, string> = {}
+    if (shopIds.length > 0) {
+      const { data: shopsData } = await supabase.from("shops").select("id, name").in("id", shopIds)
+      shopNames = (shopsData ?? []).reduce(
+        (acc, s) => {
+          acc[s.id] = s.name
+          return acc
+        },
+        {} as Record<string, string>,
       )
-      localStorage.setItem("platform_reels", JSON.stringify(customReels))
     }
-  }, [reels, isLoaded])
 
-  const addReel = (reel: Omit<VideoReel, "id" | "likes" | "comments" | "views" | "createdAt">) => {
-    const newReel: VideoReel = {
-      ...reel,
-      id: `reel_${Date.now()}`,
-      likes: 0,
-      comments: 0,
-      views: 0,
-      createdAt: new Date().toISOString().split("T")[0],
-    }
-    setReels((prev) => [newReel, ...prev])
+    setReels(
+      (rows ?? []).map((r) => {
+        const joinedName = r.shops?.name as string | undefined
+        const shopName = joinedName || shopNames[r.shop_id] || "Shop"
+        return {
+          id: r.id,
+          thumbnail: r.video_url,
+          title: "Shop Reel",
+          shopName,
+          shopId: r.shop_id,
+          likes: r.likes_count ?? 0,
+          comments: 0,
+          views: r.views_count ?? 0,
+          videoUrl: r.video_url,
+          createdAt: r.created_at,
+        }
+      }),
+    )
   }
 
-  const removeReel = (id: string) => {
-    setReels((prev) => prev.filter((r) => r.id !== id))
+  const addReel = async (reel: Omit<VideoReel, "id" | "likes" | "comments" | "views" | "createdAt">) => {
+    const { error } = await supabase.from("reels").insert({
+      shop_id: reel.shopId,
+      video_url: reel.videoUrl || reel.thumbnail,
+      likes_count: 0,
+      views_count: 0,
+    })
+    if (error) throw error
+    await refreshReels(lastShopFilter.current)
+  }
+
+  const removeReel = async (id: string) => {
+    const { error } = await supabase.from("reels").delete().eq("id", id)
+    if (error) throw error
+    await refreshReels(lastShopFilter.current)
+  }
+
+  const incrementViews = async (id: string) => {
+    if (viewedIds.current.has(id)) return
+    viewedIds.current.add(id)
+
+    const { data: currentRow, error: fetchError } = await supabase
+      .from("reels")
+      .select("views_count")
+      .eq("id", id)
+      .maybeSingle()
+
+    if (fetchError || !currentRow) {
+      console.error("Failed to read reel views", fetchError)
+      return
+    }
+
+    const nextViews = (currentRow.views_count ?? 0) + 1
+    setReels((prev) => prev.map((r) => (r.id === id ? { ...r, views: nextViews } : r)))
+
+    const { error: updateError } = await supabase.from("reels").update({ views_count: nextViews }).eq("id", id)
+    if (updateError) {
+      console.error("Failed to increment views", updateError)
+    }
+  }
+
+  const incrementLikes = async (id: string) => {
+    const { data: currentRow, error: fetchError } = await supabase
+      .from("reels")
+      .select("likes_count")
+      .eq("id", id)
+      .maybeSingle()
+
+    if (fetchError || !currentRow) {
+      console.error("Failed to read reel likes", fetchError)
+      return
+    }
+
+    const nextLikes = (currentRow.likes_count ?? 0) + 1
+    setReels((prev) => prev.map((r) => (r.id === id ? { ...r, likes: nextLikes } : r)))
+
+    const { error: updateError } = await supabase.from("reels").update({ likes_count: nextLikes }).eq("id", id)
+    if (updateError) {
+      console.error("Failed to increment likes", updateError)
+    }
   }
 
   return (
-    <ReelsContext.Provider value={{ reels, addReel, removeReel }}>
+    <ReelsContext.Provider value={{ reels, addReel, removeReel, incrementViews, incrementLikes, refreshReels }}>
       {children}
     </ReelsContext.Provider>
   )

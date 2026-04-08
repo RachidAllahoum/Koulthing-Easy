@@ -14,6 +14,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { AddProductModal } from "@/components/add-product-modal"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/lib/auth-context"
+import { useShops } from "@/lib/shops-context"
 
 const stats = [
   {
@@ -111,6 +113,10 @@ function StatusBadge({ status }: { status: string }) {
 export default function SellerDashboardPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const { toast } = useToast()
+  const { user } = useAuth()
+  const { getSellerShops } = useShops()
+  const myShops = user ? getSellerShops(user.id) : []
+  const myShop = myShops[0]
 
   const handleAddProduct = (productData: {
     name: string
@@ -134,7 +140,11 @@ export default function SellerDashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-          <p className="text-muted-foreground">Welcome back! Here&apos;s what&apos;s happening.</p>
+          <p className="text-muted-foreground">
+            {myShop
+              ? `Welcome back! Managing ${myShop.name}.`
+              : "No shop found for your account. If you were just approved, try refreshing. Otherwise contact support."}
+          </p>
         </div>
         <Button className="rounded-xl gap-2" onClick={() => setIsAddModalOpen(true)}>
           <Package className="w-4 h-4" />

@@ -1,19 +1,30 @@
 "use client"
 
 import { Play, Heart, MessageCircle, Share2, Volume2, VolumeX } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Image from "next/image"
 import { useReels } from "@/lib/reels-context"
 
-export function VideoReels() {
-  const { reels } = useReels()
+interface VideoReelsProps {
+  title?: string
+  shopId?: string
+}
+
+export function VideoReels({ title = "Featured Reels", shopId }: VideoReelsProps) {
+  const { reels, incrementLikes, incrementViews, refreshReels } = useReels()
   const [activeReel, setActiveReel] = useState<string | null>(null)
   const [isMuted, setIsMuted] = useState(true)
+
+  useEffect(() => {
+    refreshReels(shopId)
+    // refreshReels is intentionally stable enough for this use-case; depend only on shop filter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shopId])
 
   return (
     <section className="py-8">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-semibold text-foreground">Featured Reels</h2>
+        <h2 className="text-2xl font-semibold text-foreground">{title}</h2>
         <button className="text-sm font-medium text-accent hover:text-accent/80 transition-colors">
           View All
         </button>
@@ -24,7 +35,10 @@ export function VideoReels() {
           <div
             key={reel.id}
             className="relative flex-shrink-0 w-40 md:w-48 aspect-[9/16] rounded-2xl overflow-hidden bg-secondary cursor-pointer group"
-            onMouseEnter={() => setActiveReel(reel.id)}
+            onMouseEnter={() => {
+              setActiveReel(reel.id)
+              incrementViews(reel.id)
+            }}
             onMouseLeave={() => setActiveReel(null)}
           >
             {/* Background Image */}
@@ -90,7 +104,13 @@ export function VideoReels() {
 
             {/* Side Actions */}
             <div className="absolute right-2 bottom-20 flex flex-col gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button className="w-9 h-9 rounded-full bg-card/90 flex items-center justify-center shadow-md hover:scale-110 transition-transform">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  incrementLikes(reel.id)
+                }}
+                className="w-9 h-9 rounded-full bg-card/90 flex items-center justify-center shadow-md hover:scale-110 transition-transform"
+              >
                 <Heart className="w-4 h-4 text-foreground" />
               </button>
               <button className="w-9 h-9 rounded-full bg-card/90 flex items-center justify-center shadow-md hover:scale-110 transition-transform">

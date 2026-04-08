@@ -10,41 +10,28 @@ import { Input } from "@/components/ui/input"
 import { useAuth } from "@/lib/auth-context"
 import { ShoppingBag, Heart, MapPin, Phone, Mail, Edit2, LogOut, ArrowRight, Store } from "lucide-react"
 
-const mockOrders = [
-  {
-    id: "ORD-001",
-    shop: "Digital Design Studio",
-    products: [
-      { name: "UI Kit Pro", price: 49.99, qty: 1 },
-      { name: "Icon Pack", price: 19.99, qty: 1 },
-    ],
-    total: 69.98,
-    status: "delivered",
-    date: "2024-03-10",
-  },
-  {
-    id: "ORD-002",
-    shop: "Photography Basics",
-    products: [{ name: "Photography Guide", price: 29.99, qty: 1 }],
-    total: 29.99,
-    status: "in-transit",
-    date: "2024-03-08",
-  },
-  {
-    id: "ORD-003",
-    shop: "Graphic Masters",
-    products: [
-      { name: "Branding Templates", price: 39.99, qty: 2 },
-    ],
-    total: 79.98,
-    status: "processing",
-    date: "2024-03-05",
-  },
-]
+const orders: {
+  id: string
+  shop: string
+  products: { name: string; price: number; qty: number }[]
+  total: number
+  status: string
+  date: string
+}[] = []
 
 export default function ProfilePage() {
   const router = useRouter()
-  const { user, logout, isLoading } = useAuth()
+  const {
+    user,
+    logout,
+    isLoading,
+    profile,
+    isAdmin,
+    canAccessSellerDashboard,
+    canUseCart,
+    updateProfile,
+    setViewerMode,
+  } = useAuth()
   const [isEditing, setIsEditing] = useState(false)
   const [formData, setFormData] = useState({
     name: user?.name || "",
@@ -84,10 +71,20 @@ export default function ProfilePage() {
     )
   }
 
-  const handleLogout = () => {
-    logout()
+  const handleLogout = async () => {
+    await logout()
     router.push("/")
   }
+
+  const accountLabel = isAdmin
+    ? "Admin"
+    : profile?.seller_status === "approved"
+      ? "Buyer · Seller"
+      : profile?.seller_status === "pending"
+        ? "Buyer · Seller pending"
+        : profile?.seller_status === "rejected"
+          ? "Buyer · Seller rejected"
+          : "Buyer"
 
   const statuses = {
     processing: { label: "Processing", color: "bg-blue-100 text-blue-700" },
@@ -120,15 +117,21 @@ export default function ProfilePage() {
             <div className="lg:col-span-1">
               <div className="bg-card border border-border rounded-2xl p-6 sticky top-20">
                 <div className="text-center mb-6">
-                  <img
-                    src={user.avatar}
-                    alt={user.name}
-                    className="w-24 h-24 rounded-full mx-auto mb-4 border-4 border-primary"
-                  />
+                  {user.avatar ? (
+                    <img
+                      src={user.avatar}
+                      alt={user.name}
+                      className="w-24 h-24 rounded-full mx-auto mb-4 border-4 border-primary object-cover"
+                    />
+                  ) : (
+                    <div className="w-24 h-24 rounded-full mx-auto mb-4 border-4 border-primary bg-primary/10 flex items-center justify-center text-2xl font-semibold text-primary">
+                      {user.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
                   <h2 className="text-xl font-bold text-foreground">{user.name}</h2>
                   <p className="text-sm text-muted-foreground">{user.email}</p>
-                  <span className="inline-block mt-3 px-3 py-1 bg-primary/10 text-primary text-xs font-medium rounded-full capitalize">
-                    {user.role} Account
+                  <span className="inline-block mt-3 px-3 py-1 bg-primary/10 text-primary text-xs font-medium rounded-full">
+                    {accountLabel}
                   </span>
                 </div>
 
@@ -146,30 +149,34 @@ export default function ProfilePage() {
                       Settings
                     </Button>
                   </Link>
-                  {user.role === "seller" && (
-                    <Link href="/seller" className="block">
+                  {canAccessSellerDashboard && (
+                    <Link
+                      href="/seller"
+                      className="block"
+                      onClick={() => setViewerMode("seller")}
+                    >
                       <Button className="w-full gap-2 rounded-xl bg-primary hover:bg-primary/90">
                         <Store className="w-4 h-4" />
-                        Store Dashboard
+                        Seller hub
                       </Button>
                     </Link>
                   )}
                 </div>
 
                 {/* Quick Stats - Only show for buyers */}
-                {user.role === "buyer" && (
+                {canUseCart && (
                   <div className="space-y-3 border-t border-border pt-6">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Total Orders</span>
-                      <span className="font-semibold text-foreground">3</span>
+                      <span className="font-semibold text-foreground">{orders.length}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Total Spent</span>
-                      <span className="font-semibold text-foreground">DZD 179.95</span>
+                      <span className="font-semibold text-foreground">—</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Wishlist Items</span>
-                      <span className="font-semibold text-foreground">5</span>
+                      <span className="font-semibold text-foreground">—</span>
                     </div>
                   </div>
                 )}
@@ -252,7 +259,14 @@ export default function ProfilePage() {
                         />
                       </div>
                     </div>
-                    <Button className="w-full rounded-lg gap-2 mt-6">
+                    <Button
+                      type="button"
+                      className="w-full rounded-lg gap-2 mt-6"
+                      onClick={async () => {
+                        await updateProfile({ name: formData.name })
+                        setIsEditing(false)
+                      }}
+                    >
                       Save Changes
                       <ArrowRight className="w-4 h-4" />
                     </Button>
@@ -261,7 +275,7 @@ export default function ProfilePage() {
               )}
 
               {/* Orders Section - Only show for buyers */}
-              {user.role === "buyer" && (
+              {canUseCart && (
                 <div className="bg-card border border-border rounded-2xl p-6">
                   <div className="flex items-center justify-between mb-6">
                     <h3 className="text-xl font-semibold text-foreground gap-2 flex items-center">
@@ -275,9 +289,9 @@ export default function ProfilePage() {
                     </Link>
                   </div>
 
-                  {mockOrders.length > 0 ? (
+                  {orders.length > 0 ? (
                     <div className="space-y-3">
-                      {mockOrders.map((order) => (
+                      {orders.map((order) => (
                         <div
                           key={order.id}
                           className="p-4 border border-border rounded-xl hover:bg-secondary/30 transition-colors cursor-pointer"
@@ -313,47 +327,40 @@ export default function ProfilePage() {
               )}
 
               {/* Wishlist Section - Only show for buyers */}
-              {user.role === "buyer" && (
+              {canUseCart && (
                 <div className="bg-card border border-border rounded-2xl p-6">
                   <h3 className="text-xl font-semibold text-foreground gap-2 flex items-center mb-6">
                     <Heart className="w-5 h-5" />
                     Wishlist
                   </h3>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {[1, 2, 3, 4, 5].map((item) => (
-                      <div
-                        key={item}
-                        className="aspect-square bg-secondary rounded-lg flex items-center justify-center text-muted-foreground"
-                      >
-                        <Heart className="w-6 h-6 opacity-30" />
-                      </div>
-                    ))}
-                  </div>
+                  <p className="text-sm text-muted-foreground text-center py-8 border border-dashed border-border rounded-xl">
+                    Wishlist is empty. Saved items will appear here when that feature is connected to your data layer.
+                  </p>
                 </div>
               )}
 
               {/* Admin/Seller Notice */}
-              {(user.role === "admin" || user.role === "seller") && (
+              {(isAdmin || canAccessSellerDashboard) && (
                 <div className="bg-card border border-border rounded-2xl p-6">
                   <h3 className="text-xl font-semibold text-foreground mb-4">
-                    {user.role === "admin" ? "Admin Account" : "Seller Account"}
+                    {isAdmin ? "Admin tools" : "Seller access"}
                   </h3>
-                  <p className="text-muted-foreground mb-4">
-                    As a {user.role}, you can browse shops and articles but cannot make purchases.
-                    {user.role === "seller" && " Manage your shop from the Seller Dashboard."}
+                  <p className="text-muted-foreground mb-4 text-sm">
+                    Admins cannot use the cart. Use buyer (shopping) mode to shop. Approved sellers can open
+                    Seller hub to manage catalog.
                   </p>
-                  {user.role === "seller" && (
-                    <Link href="/seller">
-                      <Button className="rounded-xl gap-2">
+                  {canAccessSellerDashboard && (
+                    <Link href="/seller" onClick={() => setViewerMode("seller")}>
+                      <Button className="rounded-xl gap-2 mr-2">
                         <Store className="w-4 h-4" />
-                        Go to Seller Dashboard
+                        Seller hub
                       </Button>
                     </Link>
                   )}
-                  {user.role === "admin" && (
-                    <Link href="/admin/shop-approvals">
-                      <Button className="rounded-xl">
-                        Admin Panel
+                  {isAdmin && (
+                    <Link href="/admin">
+                      <Button variant="outline" className="rounded-xl">
+                        Admin panel
                       </Button>
                     </Link>
                   )}

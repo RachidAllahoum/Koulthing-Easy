@@ -32,11 +32,11 @@ const navItems = [
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, isLoading } = useAuth()
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
 
   // Check if user is admin
-  if (user && user.role !== "admin") {
+  if (!isLoading && (!user || !user.isAdmin)) {
     router.push("/")
     return null
   }
