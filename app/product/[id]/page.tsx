@@ -155,7 +155,7 @@ export default function ProductPage() {
 
   const discount = product?.originalPrice ? Math.round((1 - product.price / product.originalPrice) * 100) : 0
 
-  const canUseCart = !!user && user.role === "buyer"
+  const canUseCart = !!user && user.profileRole === "buyer" && !user.isAdmin
 
   const handleAddToCart = () => {
     if (!product) return
@@ -226,7 +226,7 @@ export default function ProductPage() {
       return
     }
 
-    if (user.role === "seller") {
+    if (user.profileRole === "seller" || user.isSeller) {
       alert("You cannot message yourself")
       return
     }

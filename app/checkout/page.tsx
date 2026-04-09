@@ -73,8 +73,8 @@ export default function CheckoutPage() {
   const shipping = selectedShipping?.price || 0
   const total = subtotal + shipping
 
-  // Block admin/seller from checkout
-  if (user && (user.role === "admin" || user.role === "seller")) {
+  // Block admin and anyone registered as a seller (including pending approval) from checkout
+  if (user && (user.isAdmin || user.profileRole === "seller")) {
     return (
       <div className="min-h-screen flex flex-col bg-background">
         <Header />
@@ -82,7 +82,7 @@ export default function CheckoutPage() {
           <div className="max-w-md mx-auto text-center">
             <h1 className="text-2xl font-bold text-foreground mb-2">Checkout Not Available</h1>
             <p className="text-muted-foreground mb-6">
-              {user.role === "admin" ? "Admin" : "Seller"} accounts cannot make purchases. 
+              {user.isAdmin ? "Admin" : "Seller"} accounts cannot make purchases.
               Please use a buyer account to place orders.
             </p>
             <Button asChild size="lg" className="rounded-full gap-2">

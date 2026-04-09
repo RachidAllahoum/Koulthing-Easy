@@ -1,16 +1,29 @@
 "use client"
 
-import React, { createContext, useContext, useEffect, useState } from "react"
+import React, { createContext, useCallback, useContext, useEffect, useState } from "react"
 import type { Session, User as SupabaseAuthUser } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase-client"
 
 export type UserRole = "admin" | "seller" | "buyer"
+
+/** Public slice of `profiles` — always in sync with `User` after loads and refreshes. */
+export interface AuthProfile {
+  id: string
+  email: string
+  full_name: string | null
+  role: "buyer" | "seller"
+  is_approved: boolean | null
+  is_admin: boolean
+  created_at: string
+}
 
 export interface User {
   id: string
   name: string
   email: string
   role: UserRole
+  profileRole: "buyer" | "seller"
+  sellerApproved: boolean | null
   avatar?: string
   createdAt: string
   isSeller: boolean
@@ -19,14 +32,16 @@ export interface User {
 
 interface AuthContextType {
   user: User | null
+  /** Latest `profiles` row for the signed-in user (RLS permitting). */
+  profile: AuthProfile | null
   isLoading: boolean
   isAuthenticated: boolean
-  sellerMode: boolean
-  setSellerMode: (enabled: boolean) => void
   login: (email: string, password: string) => Promise<User>
   register: (name: string, email: string, password: string) => Promise<void>
   logout: () => Promise<void>
-  updateProfile: (data: Partial<User>) => Promise<void>
+  /** Re-fetch `profiles` + rebuild `user` (e.g. after admin approval). */
+  refreshUser: () => Promise<void>
+  updateProfile: (data: Partial<Pick<User, "name" | "email">>) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -36,7 +51,8 @@ interface ProfileRow {
   email: string
   full_name: string | null
   created_at: string
-  is_seller: boolean
+  role: string | null
+  is_approved: boolean | null
   is_admin: boolean
 }
 
@@ -57,6 +73,18 @@ function logAuthFailure(step: string, error: unknown, extra?: Record<string, unk
   console.error(`[auth:${step}]`, error, extra ?? {})
 }
 
+function toAuthProfile(row: ProfileRow): AuthProfile {
+  return {
+    id: row.id,
+    email: row.email,
+    full_name: row.full_name,
+    role: row.role === "seller" ? "seller" : "buyer",
+    is_approved: row.is_approved,
+    is_admin: row.is_admin,
+    created_at: row.created_at,
+  }
+}
+
 /** Admin for UI + routing: DB flag and/or JWT app_metadata (RLS on seller_applications/shops uses JWT). */
 function isAdminFromSession(authUser: SupabaseAuthUser, profile: ProfileRow | null): boolean {
   if (profile?.is_admin === true) return true
@@ -69,7 +97,9 @@ function buildAppUser(authUser: SupabaseAuthUser, profile: ProfileRow | null): U
   const email = profile?.email ?? authUser.email ?? ""
   const name = profile?.full_name || email.split("@")[0] || "User"
   const isAdmin = isAdminFromSession(authUser, profile)
-  const isSeller = profile?.is_seller ?? false
+  const profileRole: "buyer" | "seller" = profile?.role === "seller" ? "seller" : "buyer"
+  const sellerApproved = profile?.is_approved ?? null
+  const isSeller = profileRole === "seller" && sellerApproved === true
   const role: UserRole = isAdmin ? "admin" : isSeller ? "seller" : "buyer"
 
   return {
@@ -77,6 +107,8 @@ function buildAppUser(authUser: SupabaseAuthUser, profile: ProfileRow | null): U
     name,
     email,
     role,
+    profileRole,
+    sellerApproved,
     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email || authUser.id}`,
     createdAt: profile?.created_at ?? authUser.created_at ?? new Date().toISOString(),
     isSeller,
@@ -84,14 +116,10 @@ function buildAppUser(authUser: SupabaseAuthUser, profile: ProfileRow | null): U
   }
 }
 
-/**
- * Load profile from DB. Does not throw: auth can succeed even if the profiles row
- * is missing, RLS blocks the read, or the network fails — user is still signed in.
- */
 async function fetchProfileByUserId(userId: string, source: string): Promise<ProfileRow | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, email, full_name, created_at, is_seller, is_admin")
+    .select("id, email, full_name, created_at, role, is_approved, is_admin")
     .eq("id", userId)
     .maybeSingle()
 
@@ -111,8 +139,18 @@ async function fetchProfileByUserId(userId: string, source: string): Promise<Pro
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
+  const [profile, setProfile] = useState<AuthProfile | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [sellerMode, setSellerModeState] = useState(false)
+
+  const applyAuthState = useCallback((authUser: SupabaseAuthUser | null, profileRow: ProfileRow | null) => {
+    if (!authUser) {
+      setUser(null)
+      setProfile(null)
+      return
+    }
+    setUser(buildAppUser(authUser, profileRow))
+    setProfile(profileRow ? toAuthProfile(profileRow) : null)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -122,18 +160,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const sessionUser = session?.user ?? null
       if (!sessionUser) {
-        setUser(null)
+        applyAuthState(null, null)
         return
       }
 
       try {
-        const profile = await fetchProfileByUserId(sessionUser.id, source)
+        const profileRow = await fetchProfileByUserId(sessionUser.id, source)
         if (cancelled) return
-        setUser(buildAppUser(sessionUser, profile))
+        applyAuthState(sessionUser, profileRow)
       } catch (error) {
         logAuthFailure("applySession", error, { source, userId: sessionUser.id })
         if (!cancelled) {
-          setUser(buildAppUser(sessionUser, null))
+          applyAuthState(sessionUser, null)
         }
       }
     }
@@ -143,7 +181,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return
 
-      /** First paint uses `getSession()` below; ignoring this avoids double profile fetch and `isLoading` races */
       if (event === "INITIAL_SESSION") {
         return
       }
@@ -155,9 +192,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           logAuthFailure("onAuthStateChange", error, { event })
           const sessionUser = session?.user
           if (sessionUser && !cancelled) {
-            setUser(buildAppUser(sessionUser, null))
+            applyAuthState(sessionUser, null)
           } else if (!cancelled) {
-            setUser(null)
+            applyAuthState(null, null)
           }
         }
       })()
@@ -173,7 +210,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           logAuthFailure("getSession", error, {
             hint: "Check NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY and network.",
           })
-          setUser(null)
+          applyAuthState(null, null)
           return
         }
 
@@ -182,7 +219,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         logAuthFailure("initializeAuth", error, {
           hint: "Unexpected error during bootstrap; see stack in console.",
         })
-        if (!cancelled) setUser(null)
+        if (!cancelled) applyAuthState(null, null)
       } finally {
         if (!cancelled) setIsLoading(false)
       }
@@ -192,27 +229,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cancelled = true
       subscription.unsubscribe()
     }
-  }, [])
+  }, [applyAuthState])
 
-  useEffect(() => {
-    const savedMode = localStorage.getItem("seller_mode")
-    if (savedMode === "true") {
-      setSellerModeState(true)
+  const refreshUser = useCallback(async () => {
+    const { data, error } = await supabase.auth.getUser()
+    if (error || !data.user) {
+      applyAuthState(null, null)
+      return
     }
-  }, [])
-
-  useEffect(() => {
-    if (user && !user.isSeller && sellerMode) {
-      setSellerModeState(false)
-      localStorage.setItem("seller_mode", "false")
-    }
-  }, [user, sellerMode])
-
-  const setSellerMode = (enabled: boolean) => {
-    const next = !!(user?.isSeller && enabled)
-    setSellerModeState(next)
-    localStorage.setItem("seller_mode", next ? "true" : "false")
-  }
+    const profileRow = await fetchProfileByUserId(data.user.id, "refreshUser")
+    applyAuthState(data.user, profileRow)
+  }, [applyAuthState])
 
   const login = async (email: string, password: string): Promise<User> => {
     const normalizedEmail = email.trim().toLowerCase()
@@ -231,9 +258,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error("No user returned from Supabase login")
     }
 
-    const profile = await fetchProfileByUserId(data.user.id, "login")
-    const mappedUser = buildAppUser(data.user, profile)
-    setUser(mappedUser)
+    const profileRow = await fetchProfileByUserId(data.user.id, "login")
+    const mappedUser = buildAppUser(data.user, profileRow)
+    applyAuthState(data.user, profileRow)
     return mappedUser
   }
 
@@ -264,8 +291,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (data.session?.user) {
-      const profile = await fetchProfileByUserId(data.session.user.id, "register")
-      setUser(buildAppUser(data.session.user, profile))
+      const profileRow = await fetchProfileByUserId(data.session.user.id, "register")
+      applyAuthState(data.session.user, profileRow)
     }
   }
 
@@ -275,10 +302,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logAuthFailure("logout.signOut", error)
       throw error
     }
-    setUser(null)
+    applyAuthState(null, null)
   }
 
-  const updateProfile = async (data: Partial<User>) => {
+  const updateProfile = async (data: Partial<Pick<User, "name" | "email">>) => {
     if (!user) return
 
     const nextFullName = data.name ?? user.name
@@ -297,25 +324,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw error
     }
 
-    setUser({
-      ...user,
-      ...data,
-      name: nextFullName,
-      email: nextEmail,
-    })
+    await refreshUser()
   }
 
   return (
     <AuthContext.Provider
       value={{
         user,
+        profile,
         isLoading,
         isAuthenticated: !!user,
-        sellerMode,
-        setSellerMode,
         login,
         register,
         logout,
+        refreshUser,
         updateProfile,
       }}
     >

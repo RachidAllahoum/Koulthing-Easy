@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowRight, FileText, Store, UserPlus } from "lucide-react"
+import { ArrowRight, FileText, Store } from "lucide-react"
 
 interface NavigationCardProps {
   href: string
@@ -62,10 +62,10 @@ export function NavigationCards() {
       description: "Explore unique shops and find products from talented sellers around the world.",
     },
     {
-      href: "/become-seller",
-      icon: <UserPlus className="h-7 w-7" />,
-      title: "Become a Seller",
-      description: "Start your journey as a seller and reach thousands of potential customers.",
+      href: "/register",
+      icon: <Store className="h-7 w-7" />,
+      title: "Create Account",
+      description: "Sign up as a buyer or seller and use your dedicated experience.",
     },
   ]
 

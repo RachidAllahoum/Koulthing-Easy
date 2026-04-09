@@ -1,19 +1,33 @@
 -- Auto-create profile rows when new auth users sign up.
+-- Uses role + is_approved (buyer/seller model). Run after migrations that define these columns.
 
 -- 1) Ensure profiles has required columns/defaults.
 CREATE TABLE IF NOT EXISTS public.profiles (
   id uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
   email text,
-  is_seller boolean NOT NULL DEFAULT false,
+  role text NOT NULL DEFAULT 'buyer',
+  is_approved boolean NULL,
   is_admin boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS email text,
-  ADD COLUMN IF NOT EXISTS is_seller boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'buyer',
+  ADD COLUMN IF NOT EXISTS is_approved boolean NULL,
   ADD COLUMN IF NOT EXISTS is_admin boolean NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.profiles'::regclass AND conname = 'profiles_role_check'
+  ) THEN
+    ALTER TABLE public.profiles
+      ADD CONSTRAINT profiles_role_check CHECK (role IN ('buyer', 'seller'));
+  END IF;
+END $$;
 
 -- 2) Create trigger function.
 CREATE OR REPLACE FUNCTION public.handle_new_user_create_profile()
@@ -23,8 +37,8 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, is_seller, is_admin, created_at)
-  VALUES (NEW.id, NEW.email, false, false, now())
+  INSERT INTO public.profiles (id, email, role, is_approved, is_admin, created_at)
+  VALUES (NEW.id, NEW.email, 'buyer', NULL, false, now())
   ON CONFLICT (id) DO NOTHING;
 
   RETURN NEW;

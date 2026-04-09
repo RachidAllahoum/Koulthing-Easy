@@ -13,8 +13,8 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'Koulthing-Easy - Discover Articles, Shops & Become a Seller',
-  description: 'Your marketplace for discovering curated articles, exploring unique shops, and starting your seller journey.',
+  title: 'Koulthing-Easy - Discover Articles and Shops',
+  description: 'Your marketplace for discovering curated articles, exploring unique shops, and using separate buyer and seller accounts.',
   
   icons: {
     icon: [

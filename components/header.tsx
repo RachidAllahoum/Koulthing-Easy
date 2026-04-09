@@ -10,10 +10,10 @@ import { ProfileDropdown } from "@/components/profile-dropdown"
 
 export function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const { isAuthenticated, user, sellerMode, setSellerMode } = useAuth()
+  const { isAuthenticated, user } = useAuth()
   const { itemCount } = useCart()
 
-  const canUseCart = isAuthenticated && user?.role === "buyer" && !sellerMode
+  const canUseCart = isAuthenticated && user?.profileRole === "buyer"
 
   return (
     <header className="sticky top-0 z-50 w-full bg-background/80 backdrop-blur-md border-b border-border">
@@ -65,22 +65,12 @@ export function Header() {
           {isAuthenticated ? (
             <>
               {user?.isSeller && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setSellerMode(!sellerMode)}
-                    className="text-xs font-medium px-3 py-2 rounded-full bg-secondary text-foreground hover:bg-secondary/80 transition-colors"
-                  >
-                    {sellerMode ? "Seller Mode" : "Buyer Mode"}
-                  </button>
-                  {sellerMode && (
-                    <Link
-                      href="/seller"
-                      className="text-xs font-medium px-3 py-2 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-                    >
-                      Dashboard
-                    </Link>
-                  )}
-                </div>
+                <Link
+                  href="/seller"
+                  className="text-xs font-medium px-3 py-2 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                >
+                  Seller dashboard
+                </Link>
               )}
               {user?.isAdmin && (
                 <Link
@@ -101,7 +91,7 @@ export function Header() {
                 Log in
               </Link>
               <Button asChild className="rounded-full px-6">
-                <Link href="/become-seller">Become a Seller</Link>
+                <Link href="/register">Get Started</Link>
               </Button>
             </>
           )}
@@ -164,8 +154,8 @@ export function Header() {
                   Log in
                 </Link>
                 <Button asChild className="rounded-full">
-                  <Link href="/become-seller" onClick={() => setIsMenuOpen(false)}>
-                    Become a Seller
+                  <Link href="/register" onClick={() => setIsMenuOpen(false)}>
+                    Get Started
                   </Link>
                 </Button>
               </div>

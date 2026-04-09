@@ -46,9 +46,9 @@ interface ArticleGridProps {
 export function ArticleGrid({ title, showBadges = true, articles, category = "All", priceRange = "all", sortBy = "recommended" }: ArticleGridProps) {
   const router = useRouter()
   const { addItem } = useCart()
-  const { isAuthenticated, user, sellerMode } = useAuth()
+  const { isAuthenticated, user } = useAuth()
   const [favorites, setFavorites] = useState<Set<string>>(new Set())
-  const canUseCart = isAuthenticated && user?.role === "buyer" && !sellerMode
+  const canUseCart = isAuthenticated && user?.profileRole === "buyer"
   
   // Apply filters to articles
   const displayArticles = useMemo(() => {

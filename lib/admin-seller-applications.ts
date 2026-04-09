@@ -2,15 +2,24 @@
 
 import { supabase } from "@/lib/supabase-client"
 
-export interface PendingSellerApplication {
+export type SellerApplicationRow = Record<string, unknown> & {
   id: string
   user_id: string
-  shop_name: string
-  business_registration: string
-  description: string
-  submitted_at: string
-  applicant_name: string
-  applicant_email: string
+  status: string
+  shop_name?: string | null
+  description?: string | null
+  logo_url?: string | null
+}
+
+export interface PendingSellerApplication {
+  profile: {
+    id: string
+    email: string | null
+    full_name: string | null
+    role: string | null
+    is_approved: boolean | null
+  }
+  application: SellerApplicationRow | null
 }
 
 async function requireAdminProfile(): Promise<{ id: string }> {
@@ -39,121 +48,150 @@ async function requireAdminProfile(): Promise<{ id: string }> {
 export async function fetchPendingSellerApplications(): Promise<PendingSellerApplication[]> {
   await requireAdminProfile()
 
-  const { data: rows, error } = await supabase
-    .from("seller_applications")
-    .select("id, user_id, shop_name, business_registration, description, submitted_at")
-    .eq("status", "pending")
-    .order("submitted_at", { ascending: false })
+  const { data: pendingProfiles, error: sellersError } = await supabase
+    .from("profiles")
+    .select("id, email, full_name, role, is_approved")
+    .eq("role", "seller")
+    .eq("is_approved", false)
 
-  if (error) {
-    throw new Error(`Failed to load pending applications: ${error.message}`)
+  if (sellersError) {
+    throw new Error(`Failed to load pending seller profiles: ${sellersError.message}`)
   }
 
-  const userIds = Array.from(new Set((rows ?? []).map((row) => row.user_id)))
-  let profilesById: Record<string, { full_name: string | null; email: string | null }> = {}
+  const sellerList = pendingProfiles ?? []
+  const userIds = sellerList.map((p) => p.id)
 
+  let applicationsByUserId: Record<string, SellerApplicationRow> = {}
   if (userIds.length > 0) {
-    const { data: profiles, error: profileError } = await supabase
-      .from("profiles")
-      .select("id, full_name, email")
-      .in("id", userIds)
+    const { data: apps, error: appsError } = await supabase
+      .from("seller_applications")
+      .select("*")
+      .in("user_id", userIds)
+      .eq("status", "pending")
+      .order("submitted_at", { ascending: false })
 
-    if (profileError) {
-      throw new Error(`Failed to load applicant profiles: ${profileError.message}`)
+    if (appsError) {
+      throw new Error(`Failed to load applications: ${appsError.message}`)
     }
 
-    profilesById = (profiles ?? []).reduce(
-      (acc, row) => {
-        acc[row.id] = { full_name: row.full_name, email: row.email }
-        return acc
-      },
-      {} as Record<string, { full_name: string | null; email: string | null }>,
-    )
+    for (const row of apps ?? []) {
+      const r = row as SellerApplicationRow
+      if (!applicationsByUserId[r.user_id]) applicationsByUserId[r.user_id] = r
+    }
   }
 
-  return (rows ?? []).map((row) => ({
-    ...row,
-    applicant_name: profilesById[row.user_id]?.full_name || "Seller",
-    applicant_email: profilesById[row.user_id]?.email || "",
+  return sellerList.map((p) => ({
+    profile: p,
+    application: applicationsByUserId[p.id] ?? null,
   }))
 }
 
-export async function approveSellerApplication(applicationId: string): Promise<void> {
-  const admin = await requireAdminProfile()
+export async function approveSellerApplication(applicationId: string, reviewedBy: string): Promise<void> {
+  await requireAdminProfile()
 
   const { data: application, error: appError } = await supabase
     .from("seller_applications")
-    .select("id, user_id, shop_name, description, status")
+    .select("*")
     .eq("id", applicationId)
     .single()
 
-  if (appError) {
-    throw new Error(`Failed to load application: ${appError.message}`)
+  if (appError || !application) {
+    throw new Error(`Failed to load application: ${appError?.message ?? "not found"}`)
   }
 
-  if (application.status !== "pending") {
-    throw new Error(`Application is already ${application.status}.`)
+  const app = application as SellerApplicationRow
+  if (app.status !== "pending") {
+    throw new Error(`Application is already ${app.status}.`)
   }
 
+  const userId = app.user_id as string
   const reviewedAt = new Date().toISOString()
 
-  const { error: approveError } = await supabase
-    .from("seller_applications")
-    .update({
-      status: "approved",
-      reviewed_at: reviewedAt,
-      reviewed_by: admin.id,
-    })
-    .eq("id", application.id)
-    .eq("status", "pending")
-
-  if (approveError) {
-    throw new Error(`Failed to approve application: ${approveError.message}`)
-  }
-
-  const { error: promoteError } = await supabase
+  const { data: promoted, error: profileError } = await supabase
     .from("profiles")
-    .update({ is_seller: true })
-    .eq("id", application.user_id)
+    .update({ is_approved: true })
+    .eq("id", userId)
+    .eq("role", "seller")
+    .select("id")
 
-  if (promoteError) {
-    throw new Error(`Failed to promote seller profile: ${promoteError.message}`)
+  if (profileError) {
+    throw new Error(`Failed to approve seller profile: ${profileError.message}`)
+  }
+  if (!promoted?.length) {
+    throw new Error("No profile updated (expected role=seller, is_approved=false).")
   }
 
   const { data: existingShops, error: shopLookupError } = await supabase
     .from("shops")
     .select("id")
-    .eq("seller_id", application.user_id)
+    .eq("seller_id", userId)
     .limit(1)
 
   if (shopLookupError) {
+    await supabase.from("profiles").update({ is_approved: false }).eq("id", userId).eq("role", "seller")
     throw new Error(`Failed to check existing shop: ${shopLookupError.message}`)
   }
 
-  if ((existingShops ?? []).length === 0) {
-    const { error: createShopError } = await supabase.from("shops").insert({
-      seller_id: application.user_id,
-      name: application.shop_name,
-      description: application.description ?? "",
+  if ((existingShops ?? []).length > 0) {
+    await supabase.from("profiles").update({ is_approved: false }).eq("id", userId).eq("role", "seller")
+    throw new Error("Seller already has a shop.")
+  }
+
+  const { data: shopRow, error: createShopError } = await supabase
+    .from("shops")
+    .insert({
+      seller_id: userId,
+      name: (app.shop_name as string) ?? "Shop",
+      description: (app.description as string | null) ?? "",
+      logo_url: (app.logo_url as string | null) ?? null,
       is_active: true,
     })
+    .select("id")
+    .maybeSingle()
 
-    if (createShopError) {
-      throw new Error(`Failed to create shop: ${createShopError.message}`)
-    }
+  if (createShopError || !shopRow?.id) {
+    await supabase.from("profiles").update({ is_approved: false }).eq("id", userId).eq("role", "seller")
+    throw new Error(`Failed to create shop: ${createShopError?.message ?? "no id"}`)
+  }
+
+  const { data: updatedApp, error: approveError } = await supabase
+    .from("seller_applications")
+    .update({
+      status: "approved",
+      reviewed_at: reviewedAt,
+      reviewed_by: reviewedBy,
+    })
+    .eq("id", applicationId)
+    .eq("status", "pending")
+    .select("id")
+
+  if (approveError || !updatedApp?.length) {
+    await supabase.from("shops").delete().eq("id", shopRow.id)
+    await supabase.from("profiles").update({ is_approved: false }).eq("id", userId).eq("role", "seller")
+    throw new Error(`Failed to finalize application: ${approveError?.message ?? "no rows"}`)
   }
 }
 
-export async function rejectSellerApplication(applicationId: string): Promise<void> {
-  const admin = await requireAdminProfile()
+export async function rejectSellerApplication(applicationId: string, reviewedBy: string): Promise<void> {
+  await requireAdminProfile()
   const reviewedAt = new Date().toISOString()
+
+  const { data: appRow, error: loadError } = await supabase
+    .from("seller_applications")
+    .select("user_id")
+    .eq("id", applicationId)
+    .maybeSingle()
+
+  if (loadError || !appRow) {
+    throw new Error(loadError?.message ?? "Application not found.")
+  }
 
   const { data: rows, error } = await supabase
     .from("seller_applications")
     .update({
       status: "rejected",
       reviewed_at: reviewedAt,
-      reviewed_by: admin.id,
+      reviewed_by: reviewedBy,
     })
     .eq("id", applicationId)
     .eq("status", "pending")
@@ -165,5 +203,15 @@ export async function rejectSellerApplication(applicationId: string): Promise<vo
 
   if (!rows || rows.length === 0) {
     throw new Error("Application is not pending or no longer exists.")
+  }
+
+  const { error: profileError } = await supabase
+    .from("profiles")
+    .update({ is_approved: false })
+    .eq("id", appRow.user_id)
+    .eq("role", "seller")
+
+  if (profileError) {
+    throw new Error(`Failed to update profile: ${profileError.message}`)
   }
 }

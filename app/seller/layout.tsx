@@ -44,6 +44,25 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
 
   const myShop = user ? getSellerShops(user.id)[0] : undefined
 
+  const isPendingApprovalRoute = pathname === "/seller/pending-approval"
+
+  if (!isLoading && !user) {
+    router.push("/login")
+    return null
+  }
+
+  if (!isLoading && user && isPendingApprovalRoute) {
+    if (user.profileRole !== "seller") {
+      router.push("/")
+      return null
+    }
+    if (user.isSeller) {
+      router.push("/seller")
+      return null
+    }
+    return <div className="min-h-screen bg-background">{children}</div>
+  }
+
   if (!isLoading && (!user || (!user.isSeller && !user.isAdmin))) {
     router.push("/")
     return null

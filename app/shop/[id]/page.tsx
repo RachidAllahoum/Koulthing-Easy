@@ -153,7 +153,7 @@ export default function ShopPage() {
       return
     }
 
-    if (user.role === "seller") {
+    if (user.profileRole === "seller" || user.isSeller) {
       alert("You cannot message another seller")
       return
     }

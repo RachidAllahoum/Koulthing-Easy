@@ -2,13 +2,16 @@
 -- 1) ensuring a signup trigger auto-creates profiles rows
 -- 2) adding an admin helper used by approval flow to create a missing profile from auth.users
 -- 3) backfilling missing profiles for existing auth.users
+--
+-- Uses role + is_approved (buyer/seller model).
 
 -- Ensure table exists with expected columns.
 CREATE TABLE IF NOT EXISTS public.profiles (
   id uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
   email text,
   full_name text,
-  is_seller boolean NOT NULL DEFAULT false,
+  role text NOT NULL DEFAULT 'buyer',
+  is_approved boolean NULL,
   is_admin boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -16,9 +19,21 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS email text,
   ADD COLUMN IF NOT EXISTS full_name text,
-  ADD COLUMN IF NOT EXISTS is_seller boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'buyer',
+  ADD COLUMN IF NOT EXISTS is_approved boolean NULL,
   ADD COLUMN IF NOT EXISTS is_admin boolean NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.profiles'::regclass AND conname = 'profiles_role_check'
+  ) THEN
+    ALTER TABLE public.profiles
+      ADD CONSTRAINT profiles_role_check CHECK (role IN ('buyer', 'seller'));
+  END IF;
+END $$;
 
 -- Trigger function: create profile automatically when a user signs up.
 CREATE OR REPLACE FUNCTION public.handle_new_user_profile()
@@ -28,12 +43,13 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, full_name, is_seller, is_admin)
+  INSERT INTO public.profiles (id, email, full_name, role, is_approved, is_admin)
   VALUES (
     NEW.id,
     NEW.email,
     COALESCE(NEW.raw_user_meta_data ->> 'full_name', ''),
-    false,
+    'buyer',
+    NULL,
     false
   )
   ON CONFLICT (id) DO UPDATE
@@ -74,23 +90,34 @@ BEGIN
     RAISE EXCEPTION 'auth.users row not found for id %', p_user_id;
   END IF;
 
-  INSERT INTO public.profiles (id, email, full_name, is_seller)
-  VALUES (p_user_id, v_email, v_full_name, p_make_seller)
+  INSERT INTO public.profiles (id, email, full_name, role, is_approved)
+  VALUES (
+    p_user_id,
+    v_email,
+    v_full_name,
+    CASE WHEN p_make_seller THEN 'seller' ELSE 'buyer' END,
+    CASE WHEN p_make_seller THEN true ELSE NULL END
+  )
   ON CONFLICT (id) DO UPDATE
     SET email = EXCLUDED.email,
-        is_seller = CASE WHEN p_make_seller THEN true ELSE public.profiles.is_seller END;
+        role = CASE WHEN p_make_seller THEN 'seller' ELSE public.profiles.role END,
+        is_approved = CASE
+          WHEN p_make_seller THEN true
+          ELSE public.profiles.is_approved
+        END;
 END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.admin_create_missing_profile_from_auth_user(uuid, boolean) TO authenticated;
 
 -- Backfill existing auth users missing in public.profiles.
-INSERT INTO public.profiles (id, email, full_name, is_seller, is_admin)
+INSERT INTO public.profiles (id, email, full_name, role, is_approved, is_admin)
 SELECT
   u.id,
   u.email,
   COALESCE(u.raw_user_meta_data ->> 'full_name', ''),
-  false,
+  'buyer',
+  NULL,
   false
 FROM auth.users u
 LEFT JOIN public.profiles p ON p.id = u.id

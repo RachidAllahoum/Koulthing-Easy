@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Mail, Lock, ArrowRight } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
+import { resolvePostLoginPath } from "@/lib/post-login-redirect"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -34,8 +35,9 @@ export default function LoginPage() {
         password: passwordToSend,
       })
 
-      await login(emailToSend, passwordToSend)
-      router.push("/profile")
+      const loggedIn = await login(emailToSend, passwordToSend)
+      const nextPath = await resolvePostLoginPath(loggedIn.id)
+      router.push(nextPath)
     } catch (err) {
       console.error("[login.form] login failed", err)
       setError(err instanceof Error ? err.message : "Invalid email or password")
@@ -172,13 +174,6 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          {/* Seller Link */}
-          <p className="text-center text-muted-foreground mt-3">
-            Want to sell?{" "}
-            <Link href="/become-seller" className="text-accent font-medium hover:text-accent/80 transition-colors">
-              Become a seller
-            </Link>
-          </p>
         </div>
       </main>
 

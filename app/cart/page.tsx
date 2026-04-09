@@ -20,12 +20,12 @@ import {
 export default function CartPage() {
   const router = useRouter()
   const { items, updateQuantity, removeItem, total } = useCart()
-  const { isAuthenticated, user, sellerMode } = useAuth()
+  const { isAuthenticated, user } = useAuth()
 
   const shipping = total > 10000 ? 0 : 500
   const finalTotal = total + shipping
 
-  const canUseCart = isAuthenticated && user?.role === "buyer" && !sellerMode
+  const canUseCart = isAuthenticated && user?.profileRole === "buyer"
 
   const handleCheckout = () => {
     if (!canUseCart) {
