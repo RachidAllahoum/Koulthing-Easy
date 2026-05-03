@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Header } from "@/components/header"
@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Mail, Lock, User, ArrowRight, Check, Store } from "lucide-react"
 import { supabase } from "@/lib/supabase-client"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useAuth } from "@/lib/auth-context"
+import { resolvePostLoginPath, safeInternalRedirectPath } from "@/lib/post-login-redirect"
 
 type AccountType = "buyer" | "seller"
 
@@ -26,6 +28,7 @@ const SHOP_CATEGORIES = [
 
 export default function RegisterPage() {
   const router = useRouter()
+  const { user, isLoading: authLoading } = useAuth()
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [accountType, setAccountType] = useState<AccountType>("buyer")
@@ -50,6 +53,35 @@ export default function RegisterPage() {
     bankInfo: "",
   })
   const [shopLogoFile, setShopLogoFile] = useState<File | null>(null)
+
+  useEffect(() => {
+    if (authLoading || !user) return
+    let cancelled = false
+    void (async () => {
+      const defaultPath = await resolvePostLoginPath(user.id)
+      const wanted = safeInternalRedirectPath(
+        typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("redirect") : null,
+      )
+      const next =
+        wanted && !user.isAdmin ? wanted : defaultPath
+      if (!cancelled) router.replace(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [authLoading, user, router])
+
+  if (authLoading || user) {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <Header />
+        <main className="flex-1 flex items-center justify-center px-4">
+          <p className="text-muted-foreground">Redirecting…</p>
+        </main>
+        <Footer />
+      </div>
+    )
+  }
 
   const passwordRequirements = [
     { label: "At least 8 characters", met: formData.password.length >= 8 },
@@ -97,10 +129,19 @@ export default function RegisterPage() {
     }).eq("id", data.user.id)
 
     if (profileError) throw profileError
-    router.push("/")
+    if (!data.session) {
+      const wanted = safeInternalRedirectPath(
+        typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("redirect") : null,
+      )
+      router.push(wanted ? `/login?redirect=${encodeURIComponent(wanted)}` : "/login")
+    }
   }
 
   const handleSellerSubmit = async () => {
+    const businessRegistration = formData.businessRegistration.trim()
+    if (!businessRegistration) {
+      throw new Error("Numéro d'identification (NIF/registre de commerce) requis.")
+    }
     const email = formData.email.trim().toLowerCase()
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -129,7 +170,7 @@ export default function RegisterPage() {
       user_id: data.user.id,
       shop_name: formData.shopName.trim(),
       description: formData.shopDescription.trim(),
-      business_registration: formData.businessRegistration.trim(),
+      business_registration: businessRegistration,
       tax_id: formData.taxId.trim() || null,
       shop_phone: formData.shopPhone.trim(),
       street_address: formData.street.trim(),
@@ -361,7 +402,9 @@ export default function RegisterPage() {
                         />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-foreground mb-2">Business Registration</label>
+                        <label className="block text-sm font-medium text-foreground mb-2">
+                          Numéro d'identification nationale (NIF) ou numéro de registre de commerce
+                        </label>
                         <Input
                           className="h-12 rounded-xl"
                           value={formData.businessRegistration}

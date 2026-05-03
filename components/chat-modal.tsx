@@ -4,18 +4,24 @@ import { useState, useRef, useEffect } from "react"
 import { X, Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { useMessaging, type Conversation } from "@/lib/messaging-context"
+import { useMessaging } from "@/lib/messaging-context"
 import { useAuth } from "@/lib/auth-context"
 
 interface ChatModalProps {
-  conversation: Conversation
   isOpen: boolean
   onClose: () => void
 }
 
-export function ChatModal({ conversation, isOpen, onClose }: ChatModalProps) {
+export function ChatModal({ isOpen, onClose }: ChatModalProps) {
   const [messageText, setMessageText] = useState("")
-  const { sendMessage, currentConversation } = useMessaging()
+  const {
+    activeThread,
+    threadMessages,
+    threadLoading,
+    sendError,
+    sendThreadMessage,
+    closeThread,
+  } = useMessaging()
   const { user } = useAuth()
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -25,58 +31,64 @@ export function ChatModal({ conversation, isOpen, onClose }: ChatModalProps) {
 
   useEffect(() => {
     scrollToBottom()
-  }, [conversation.messages])
+  }, [threadMessages])
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!messageText.trim() || !user) return
-
-    sendMessage(conversation.id, user.id, user.name, user.role, messageText)
+    await sendThreadMessage(messageText)
     setMessageText("")
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      handleSendMessage()
+      void handleSendMessage()
     }
   }
 
-  if (!isOpen) return null
+  const handleClose = () => {
+    closeThread()
+    onClose()
+  }
+
+  if (!isOpen || !activeThread) return null
 
   const otherUser =
-    conversation.buyerId === user?.id ? conversation.sellerName : conversation.buyerName
-  const contextInfo = conversation.productName || conversation.shopName || "General Inquiry"
+    activeThread.buyerId === user?.id ? activeThread.sellerName : activeThread.buyerName
+  const contextInfo =
+    activeThread.productName || activeThread.shopName || "Message the shop"
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-end sm:justify-center">
       <div className="bg-background rounded-t-2xl sm:rounded-2xl w-full sm:w-full sm:max-w-md h-[80vh] sm:h-[600px] flex flex-col shadow-lg">
-        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border">
-          <div className="flex-1">
-            <h3 className="font-semibold text-foreground">{otherUser}</h3>
-            <p className="text-xs text-muted-foreground">{contextInfo}</p>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-foreground truncate">{otherUser}</h3>
+            <p className="text-xs text-muted-foreground truncate">{contextInfo}</p>
           </div>
           <button
-            onClick={onClose}
-            className="p-2 hover:bg-secondary rounded-lg transition-colors"
+            type="button"
+            onClick={handleClose}
+            className="p-2 hover:bg-secondary rounded-lg transition-colors shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {conversation.messages.length === 0 ? (
+          {threadLoading ? (
+            <div className="flex items-center justify-center h-full text-center">
+              <p className="text-sm text-muted-foreground">Loading messages…</p>
+            </div>
+          ) : threadMessages.length === 0 ? (
             <div className="flex items-center justify-center h-full text-center">
               <p className="text-muted-foreground">Start a conversation</p>
             </div>
           ) : (
-            conversation.messages.map((message) => (
+            threadMessages.map((message) => (
               <div
                 key={message.id}
-                className={`flex ${
-                  message.senderId === user?.id ? "justify-end" : "justify-start"
-                }`}
+                className={`flex ${message.senderId === user?.id ? "justify-end" : "justify-start"}`}
               >
                 <div
                   className={`max-w-xs px-4 py-2 rounded-2xl ${
@@ -85,9 +97,9 @@ export function ChatModal({ conversation, isOpen, onClose }: ChatModalProps) {
                       : "bg-secondary text-foreground"
                   }`}
                 >
-                  <p className="text-sm">{message.text}</p>
+                  <p className="text-sm whitespace-pre-wrap break-words">{message.text}</p>
                   <span className="text-xs opacity-70 mt-1 block">
-                    {new Date(message.timestamp).toLocaleTimeString([], {
+                    {new Date(message.createdAt).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
                     })}
@@ -99,18 +111,19 @@ export function ChatModal({ conversation, isOpen, onClose }: ChatModalProps) {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
         <div className="border-t border-border p-4 space-y-3">
+          {sendError ? <p className="text-xs text-destructive text-center">{sendError}</p> : null}
           <div className="flex gap-2">
             <Input
               placeholder="Type a message..."
               value={messageText}
               onChange={(e) => setMessageText(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyPress}
               className="rounded-full"
             />
             <Button
-              onClick={handleSendMessage}
+              type="button"
+              onClick={() => void handleSendMessage()}
               disabled={!messageText.trim()}
               size="icon"
               className="rounded-full"

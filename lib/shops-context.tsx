@@ -17,6 +17,12 @@ export interface Shop {
   followers: number
   image: string
   coverImage: string
+  shopPhone: string
+  instagramUrl: string
+  facebookUrl: string
+  streetAddress: string
+  city: string
+  wilaya: string
   status: "pending" | "approved" | "rejected"
   createdAt: string
 }
@@ -43,6 +49,14 @@ interface ShopRow {
   name: string
   description: string | null
   logo_url: string | null
+  cover_url: string | null
+  shop_category: string | null
+  street_address: string | null
+  city: string | null
+  wilaya: string | null
+  shop_phone: string | null
+  instagram_url: string | null
+  facebook_url: string | null
   created_at: string
   is_active: boolean
 }
@@ -61,7 +75,9 @@ export function ShopsProvider({ children }: { children: React.ReactNode }) {
     try {
       const { data: shopsRows, error: shopsError } = await supabase
         .from("shops")
-        .select("id, seller_id, name, description, logo_url, created_at, is_active")
+        .select(
+          "id, seller_id, name, description, logo_url, cover_url, shop_category, street_address, city, wilaya, shop_phone, instagram_url, facebook_url, created_at, is_active",
+        )
         .order("created_at", { ascending: false })
 
       if (shopsError) throw shopsError
@@ -109,25 +125,34 @@ export function ShopsProvider({ children }: { children: React.ReactNode }) {
   }, [refresh])
 
   const mapDbShopToShop = useCallback(
-    (row: ShopRow): Shop => ({
-      id: row.id,
-      name: row.name,
-      description: row.description ?? "",
-      category: "Shop",
-      sellerId: row.seller_id,
-      sellerName: profilesById[row.seller_id]?.full_name || "Seller",
-      sellerEmail: profilesById[row.seller_id]?.email || "",
-      location: "-",
-      rating: 0,
-      reviewCount: 0,
-      followers: 0,
-      image:
-        row.logo_url ||
-        "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=200&h=200&fit=crop",
-      coverImage: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800&h=400&fit=crop",
-      status: row.is_active ? "approved" : "rejected",
-      createdAt: row.created_at,
-    }),
+    (row: ShopRow): Shop => {
+      const city = row.city?.trim() ?? ""
+      const wilaya = row.wilaya?.trim() ?? ""
+      const loc = [city, wilaya].filter(Boolean).join(", ")
+      return {
+        id: row.id,
+        name: row.name,
+        description: row.description ?? "",
+        category: row.shop_category?.trim() || "Shop",
+        sellerId: row.seller_id,
+        sellerName: profilesById[row.seller_id]?.full_name || "Seller",
+        sellerEmail: profilesById[row.seller_id]?.email || "",
+        location: loc || "—",
+        rating: 0,
+        reviewCount: 0,
+        followers: 0,
+        image: row.logo_url?.trim() || "",
+        coverImage: row.cover_url?.trim() || "",
+        shopPhone: row.shop_phone?.trim() || "",
+        instagramUrl: row.instagram_url?.trim() || "",
+        facebookUrl: row.facebook_url?.trim() || "",
+        streetAddress: row.street_address?.trim() || "",
+        city,
+        wilaya,
+        status: row.is_active ? "approved" : "rejected",
+        createdAt: row.created_at,
+      }
+    },
     [profilesById],
   )
 

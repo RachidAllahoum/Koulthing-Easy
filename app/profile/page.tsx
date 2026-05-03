@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/lib/auth-context"
+import { useToast } from "@/hooks/use-toast"
+import { supabase } from "@/lib/supabase-client"
 import { ShoppingBag, Heart, LogOut, ArrowRight, Store, Shield, Clock } from "lucide-react"
 
 const placeholderOrders: {
@@ -20,8 +21,8 @@ const placeholderOrders: {
 }[] = []
 
 export default function ProfilePage() {
-  const router = useRouter()
-  const { user, profile, logout, isLoading, updateProfile } = useAuth()
+  const { user, profile, logout, updateProfile } = useAuth()
+  const { toast } = useToast()
   const [isEditing, setIsEditing] = useState(false)
   const [formData, setFormData] = useState({
     name: "",
@@ -41,17 +42,51 @@ export default function ProfilePage() {
     }))
   }, [user?.id, user?.name, user?.email])
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex flex-col bg-background">
-        <Header />
-        <main className="flex-1 flex items-center justify-center">
-          <p className="text-muted-foreground">Loading...</p>
-        </main>
-        <Footer />
-      </div>
-    )
-  }
+  const [followedShops, setFollowedShops] = useState<{ id: string; name: string; logoUrl: string | null }[]>([])
+  const [followedShopsLoading, setFollowedShopsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!user || !profile) return
+    const buyerOnly = profile.role === "buyer" && !user.isAdmin
+    if (!buyerOnly) {
+      setFollowedShops([])
+      setFollowedShopsLoading(false)
+      return
+    }
+    let cancelled = false
+    setFollowedShopsLoading(true)
+    void (async () => {
+      const { data, error } = await supabase
+        .from("followers")
+        .select("created_at, shops(id, name, logo_url)")
+        .eq("buyer_id", user.id)
+        .order("created_at", { ascending: false })
+      if (cancelled) return
+      if (error) {
+        console.error(error)
+        setFollowedShops([])
+        setFollowedShopsLoading(false)
+        return
+      }
+      type ShopJoin = { id: string; name: string; logo_url: string | null }
+      type Row = { shops: ShopJoin | ShopJoin[] | null }
+      const rows = (data ?? []) as unknown as Row[]
+      const pickShop = (r: Row): ShopJoin | null => {
+        const s = r.shops
+        if (!s) return null
+        return Array.isArray(s) ? (s[0] ?? null) : s
+      }
+      const mapped = rows
+        .map(pickShop)
+        .filter((s): s is ShopJoin => Boolean(s?.id))
+        .map((s) => ({ id: s.id, name: s.name, logoUrl: s.logo_url }))
+      setFollowedShops(mapped)
+      setFollowedShopsLoading(false)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id, user?.isAdmin, profile?.role])
 
   if (!user || !profile) {
     return (
@@ -76,11 +111,9 @@ export default function ProfilePage() {
 
   const handleLogout = async () => {
     await logout()
-    router.push("/")
   }
 
-  const isBuyerAccount = profile.role === "buyer"
-  const showBuyerExperience = isBuyerAccount && !user.isAdmin
+  const showBuyerExperience = profile.role === "buyer" && !user.isAdmin
   const sellerAwaitingApproval = profile.role === "seller" && !user.isSeller
 
   const accountBadge = user.isAdmin
@@ -95,7 +128,7 @@ export default function ProfilePage() {
 
   const approvalDetail =
     profile.role === "seller" && !user.isSeller
-      ? "Your seller application is being reviewed. You will get dashboard access after approval."
+      ? "Your seller account is under review. You will be notified once approved. Thank you for your patience."
       : null
 
   return (
@@ -272,8 +305,17 @@ export default function ProfilePage() {
                       type="button"
                       className="w-full rounded-lg gap-2 mt-2"
                       onClick={async () => {
-                        await updateProfile({ name: formData.name, email: formData.email })
-                        setIsEditing(false)
+                        try {
+                          await updateProfile({ name: formData.name, email: formData.email })
+                          setIsEditing(false)
+                          toast({
+                            title: "Profile saved",
+                            description: "Your name and email were updated.",
+                          })
+                        } catch (e) {
+                          const msg = e instanceof Error ? e.message : "Could not save profile."
+                          toast({ title: "Save failed", description: msg, variant: "destructive" })
+                        }
                       }}
                     >
                       Save name &amp; email
@@ -297,8 +339,45 @@ export default function ProfilePage() {
                     </Link>
                   </div>
                   <p className="text-center text-muted-foreground py-6 text-sm">
-                    Connect this section to your `orders` table to show live purchase history.
+                    View your purchases and delivery status on the order history page.
                   </p>
+                </div>
+              )}
+
+              {showBuyerExperience && (
+                <div className="bg-card border border-border rounded-2xl p-6">
+                  <h3 className="text-xl font-semibold text-foreground gap-2 flex items-center mb-6">
+                    <Heart className="w-5 h-5 fill-accent text-accent" />
+                    Shops you follow
+                  </h3>
+                  {followedShopsLoading ? (
+                    <p className="text-sm text-muted-foreground text-center py-8">Loading shops…</p>
+                  ) : followedShops.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-8 border border-dashed border-border rounded-xl">
+                      You are not following any shops yet. Use Follow on a shop or product page to save it here.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {followedShops.map((s) => (
+                        <li key={s.id}>
+                          <Link
+                            href={`/shop/${s.id}`}
+                            className="flex items-center gap-3 rounded-xl border border-border px-3 py-2.5 hover:bg-secondary/40 transition-colors"
+                          >
+                            <div className="w-10 h-10 rounded-lg bg-secondary overflow-hidden flex items-center justify-center shrink-0">
+                              {s.logoUrl ? (
+                                <img src={s.logoUrl} alt="" className="w-full h-full object-cover" />
+                              ) : (
+                                <Store className="w-5 h-5 text-muted-foreground" />
+                              )}
+                            </div>
+                            <span className="font-medium text-foreground flex-1 min-w-0 truncate">{s.name}</span>
+                            <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
 

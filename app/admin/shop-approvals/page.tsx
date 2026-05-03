@@ -7,13 +7,13 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
 import { supabase } from "@/lib/supabase-client"
+import { shopPayloadFromSellerApplication } from "@/lib/shop-from-application"
+import { OrderCancelDialog } from "@/components/order-cancel-dialog"
 
 interface PendingSellerProfile {
   id: string
   email: string | null
   full_name: string | null
-  role: string | null
-  is_approved: boolean | null
 }
 
 /** Full row from seller_applications (select *). */
@@ -40,12 +40,11 @@ export default function AdminShopApprovalsPage() {
   const router = useRouter()
   const { user, isLoading: authLoading } = useAuth()
   const { toast } = useToast()
-  const [rows, setRows] = useState<{ profile: PendingSellerProfile; application: SellerApplicationRecord | null }[]>(
-    [],
-  )
+  const [rows, setRows] = useState<{ profile: PendingSellerProfile | null; application: SellerApplicationRecord }[]>([])
   const [rejected, setRejected] = useState<SellerApplicationRecord[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [processingId, setProcessingId] = useState<string | null>(null)
+  const [rejectTarget, setRejectTarget] = useState<{ application: SellerApplicationRecord | null; userId: string } | null>(null)
 
   const fetchQueue = useCallback(async () => {
     setIsLoading(true)
@@ -56,50 +55,41 @@ export default function AdminShopApprovalsPage() {
       return
     }
 
-    const { data: pendingProfiles, error: sellersError } = await supabase
-      .from("profiles")
-      .select("id, email, full_name, role, is_approved")
-      .eq("role", "seller")
-      .eq("is_approved", false)
+    const { data: pendingApps, error: appsError } = await supabase
+      .from("seller_applications")
+      .select("*")
+      .eq("status", "pending")
+      .order("submitted_at", { ascending: false })
 
-    if (sellersError) {
-      console.error("[admin approvals] pending sellers fetch failed", sellersError)
+    if (appsError) {
+      console.error("[admin approvals] pending applications fetch failed", appsError)
       setRows([])
       setRejected([])
       setIsLoading(false)
       return
     }
 
-    const sellerList = (pendingProfiles ?? []) as PendingSellerProfile[]
-    const userIds = sellerList.map((p) => p.id)
-
-    let applicationsByUserId: Record<string, SellerApplicationRecord> = {}
+    const apps = (pendingApps ?? []) as SellerApplicationRecord[]
+    const userIds = [...new Set(apps.map((a) => String(a.user_id)).filter(Boolean))]
+    let profilesById: Record<string, PendingSellerProfile> = {}
     if (userIds.length > 0) {
-      const { data: apps, error: appsError } = await supabase
-        .from("seller_applications")
-        .select("*")
-        .in("user_id", userIds)
-        .eq("status", "pending")
-        .order("submitted_at", { ascending: false })
-
-      if (appsError) {
-        console.error("[admin approvals] applications fetch failed", appsError)
-        setRows([])
-        setRejected([])
-        setIsLoading(false)
-        return
-      }
-
-      for (const row of apps ?? []) {
-        const r = row as SellerApplicationRecord
-        const uid = r.user_id as string
-        if (!applicationsByUserId[uid]) applicationsByUserId[uid] = r
+      const { data: profileRows, error: profileErr } = await supabase
+        .from("profiles")
+        .select("id, email, full_name")
+        .in("id", userIds)
+      if (profileErr) {
+        console.warn("[admin approvals] profiles lookup failed", profileErr)
+      } else {
+        profilesById = ((profileRows ?? []) as PendingSellerProfile[]).reduce<Record<string, PendingSellerProfile>>((acc, p) => {
+          acc[p.id] = p
+          return acc
+        }, {})
       }
     }
 
-    const merged = sellerList.map((profileRow) => ({
-      profile: profileRow,
-      application: applicationsByUserId[profileRow.id] ?? null,
+    const merged = apps.map((application) => ({
+      profile: profilesById[String(application.user_id)] ?? null,
+      application,
     }))
 
     const { data: rejectedApps, error: rejError } = await supabase
@@ -130,7 +120,7 @@ export default function AdminShopApprovalsPage() {
     return null
   }
 
-  const pendingCount = rows.filter((r) => r.application).length
+  const pendingCount = rows.length
 
   const handleApprove = async (application: SellerApplicationRecord) => {
     const id = application.id as string
@@ -167,15 +157,13 @@ export default function AdminShopApprovalsPage() {
         throw new Error("This seller already has a shop.")
       }
 
-      const shopPayload = {
-        seller_id: applicationUserId,
-        name: (application.shop_name as string) ?? "Shop",
-        description: (application.description as string | null) ?? "",
-        logo_url: (application.logo_url as string | null) ?? null,
-        is_active: true,
-      }
+      const shopPayload = shopPayloadFromSellerApplication(applicationUserId, application)
 
-      const { data: shopRow, error: shopError } = await supabase.from("shops").insert(shopPayload).select("id").maybeSingle()
+      const { data: shopRow, error: shopError } = await supabase
+        .from("shops")
+        .insert(shopPayload)
+        .select("id")
+        .maybeSingle()
 
       if (shopError) throw new Error(`Shop create failed: ${shopError.message}`)
       shopId = shopRow?.id ?? null
@@ -212,38 +200,30 @@ export default function AdminShopApprovalsPage() {
     }
   }
 
-  const handleReject = async (application: SellerApplicationRecord | null, applicationUserId: string) => {
-    const id = application?.id
-    setProcessingId(id ?? applicationUserId)
+  const handleReject = async (application: SellerApplicationRecord, applicationUserId: string, reviewNotes: string) => {
+    const id = application.id
+    setProcessingId(id)
     try {
       const reviewedAt = new Date().toISOString()
+      const notes = reviewNotes.trim()
+      if (!notes) throw new Error("Rejection reason is required.")
 
-      if (id) {
-        const { data: updated, error: appError } = await supabase
-          .from("seller_applications")
-          .update({ status: "rejected", reviewed_at: reviewedAt, reviewed_by: user.id })
-          .eq("id", id)
-          .eq("status", "pending")
-          .select("id")
+      const { data: updated, error: appError } = await supabase
+        .from("seller_applications")
+        .update({ status: "rejected", reviewed_at: reviewedAt, reviewed_by: user.id, review_notes: notes })
+        .eq("id", id)
+        .eq("status", "pending")
+        .select("id")
 
-        if (appError) throw new Error(`Application update failed: ${appError.message}`)
-        if (!updated?.length) throw new Error("Application is not pending.")
+      if (appError) throw new Error(`Application update failed: ${appError.message}`)
+      if (!updated?.length) throw new Error("Application is not pending.")
 
-        const { error: profileError } = await supabase
-          .from("profiles")
-          .update({ is_approved: false })
-          .eq("id", applicationUserId)
-          .eq("role", "seller")
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({ is_approved: false, role: "seller" })
+        .eq("id", applicationUserId)
 
-        if (profileError) throw new Error(`Profile update failed: ${profileError.message}`)
-      } else {
-        const { error: profileError } = await supabase
-          .from("profiles")
-          .update({ role: "buyer", is_approved: null })
-          .eq("id", applicationUserId)
-
-        if (profileError) throw new Error(`Profile update failed: ${profileError.message}`)
-      }
+      if (profileError) throw new Error(`Profile update failed: ${profileError.message}`)
 
       toast({ title: "Rejected" })
       await fetchQueue()
@@ -263,9 +243,8 @@ export default function AdminShopApprovalsPage() {
     <div className="p-6 lg:p-8 max-w-4xl">
       <h1 className="text-2xl font-bold mb-2">Seller applications</h1>
       <p className="mb-6 text-muted-foreground text-sm">
-        Profiles with <span className="font-medium text-foreground">role = seller</span> and{" "}
-        <span className="font-medium text-foreground">is_approved = false</span>
-        {pendingCount > 0 ? ` — ${pendingCount} with a pending application row` : ""}.
+        Pending rows from <span className="font-medium text-foreground">seller_applications</span>
+        {pendingCount > 0 ? ` — ${pendingCount} pending application${pendingCount === 1 ? "" : "s"}` : ""}.
       </p>
 
       {isLoading ? (
@@ -273,60 +252,55 @@ export default function AdminShopApprovalsPage() {
       ) : (
         <div className="space-y-6">
           {rows.map(({ profile, application }) => (
-            <div key={profile.id} className="border rounded-xl p-5 space-y-4 bg-card">
+            <div key={String(application.id)} className="border rounded-xl p-5 space-y-4 bg-card">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h2 className="font-semibold text-lg">{profile.full_name || "Applicant"}</h2>
-                  <p className="text-sm text-muted-foreground">{profile.email}</p>
+                  <h2 className="font-semibold text-lg">{profile?.full_name || "Applicant"}</h2>
+                  <p className="text-sm text-muted-foreground">{profile?.email || "No email"}</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Profile id: <span className="font-mono">{profile.id}</span>
+                    Profile id: <span className="font-mono">{String(application.user_id)}</span>
                   </p>
                 </div>
-                <Badge variant={application ? "default" : "secondary"}>{application ? "Pending application" : "No pending row"}</Badge>
+                <Badge variant="default">Pending application</Badge>
               </div>
 
-              {application ? (
-                <>
-                  <div className="grid gap-2 sm:grid-cols-2 text-sm border-t border-border pt-4">
-                    {Object.entries(application)
-                      .filter(([key]) => !["reviewed_by"].includes(key))
-                      .map(([key, value]) => (
-                        <div key={key} className="flex flex-col gap-0.5">
-                          <span className="text-xs text-muted-foreground">{formatFieldLabel(key)}</span>
-                          <span className="text-foreground break-all">{formatFieldValue(value)}</span>
-                        </div>
-                      ))}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => void handleApprove(application)} disabled={processingId !== null}>
-                      {processingId === application.id ? "Working…" : "Approve"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => void handleReject(application, profile.id)}
-                      disabled={processingId !== null}
-                    >
-                      Reject
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <p className="text-sm text-amber-700 border border-amber-200 dark:border-amber-900 rounded-lg p-3">
-                  This seller profile is unapproved but has no pending <code className="text-xs">seller_applications</code> row.
-                  You can reject to demote the account to buyer, or fix data in Supabase.
-                </p>
-              )}
-
-              {!application ? (
-                <Button variant="outline" onClick={() => void handleReject(null, profile.id)} disabled={processingId !== null}>
-                  Reject (demote to buyer)
-                </Button>
-              ) : null}
+              <>
+                <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                  <p className="text-xs text-muted-foreground">
+                    Numéro d'identification nationale (NIF) ou registre de commerce
+                  </p>
+                  <p className="text-sm font-medium text-foreground break-all">
+                    {formatFieldValue(application.business_registration)}
+                  </p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 text-sm border-t border-border pt-4">
+                  {Object.entries(application)
+                    .filter(([key]) => !["reviewed_by"].includes(key))
+                    .map(([key, value]) => (
+                      <div key={key} className="flex flex-col gap-0.5">
+                        <span className="text-xs text-muted-foreground">{formatFieldLabel(key)}</span>
+                        <span className="text-foreground break-all">{formatFieldValue(value)}</span>
+                      </div>
+                    ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => void handleApprove(application)} disabled={processingId !== null}>
+                    {processingId === application.id ? "Working…" : "Approve"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setRejectTarget({ application, userId: String(application.user_id) })}
+                    disabled={processingId !== null}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              </>
             </div>
           ))}
 
           {rows.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No unapproved seller profiles in the queue.</p>
+            <p className="text-sm text-muted-foreground">No pending seller applications in the queue.</p>
           ) : null}
 
           {rejected.length > 0 ? (
@@ -340,6 +314,12 @@ export default function AdminShopApprovalsPage() {
                       <Badge variant="destructive">Rejected</Badge>
                     </div>
                     <p className="text-muted-foreground text-xs mt-1">User: {String(a.user_id)}</p>
+                    {a.review_notes ? (
+                      <p className="text-xs mt-1">
+                        <span className="text-muted-foreground">Reason: </span>
+                        <span className="text-foreground">{String(a.review_notes)}</span>
+                      </p>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -347,6 +327,25 @@ export default function AdminShopApprovalsPage() {
           ) : null}
         </div>
       )}
+
+      <OrderCancelDialog
+        open={rejectTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setRejectTarget(null)
+        }}
+        title="Reject seller application"
+        description="Reason for rejection (required). This reason will be visible to the seller."
+        confirmLabel="Reject application"
+        busy={
+          rejectTarget != null &&
+          processingId === (rejectTarget.application?.id ?? rejectTarget.userId)
+        }
+        onConfirm={async (reason) => {
+          if (!rejectTarget?.application) return
+          await handleReject(rejectTarget.application, rejectTarget.userId, reason)
+          setRejectTarget(null)
+        }}
+      />
     </div>
   )
 }

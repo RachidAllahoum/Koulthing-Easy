@@ -1,98 +1,63 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
-import { SlidersHorizontal, ChevronDown, X } from "lucide-react"
+import { SlidersHorizontal, ChevronDown, X, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
-const categories = [
-  "All",
-  "Fashion",
-  "Electronics",
-  "Home & Garden",
-  "Beauty",
-  "Sports",
-  "Handmade",
-  "Food",
-]
+export interface ProductFiltersState {
+  search: string
+  category: string
+  minPrice: string
+  maxPrice: string
+  size: string
+  color: string
+  sort: "newest" | "price-asc" | "price-desc" | "bestselling"
+}
 
-const priceRanges = [
-  { label: "All Prices", value: "all" },
-  { label: "Under 1000 DZD", value: "0-1000" },
-  { label: "1000 - 5000 DZD", value: "1000-5000" },
-  { label: "5000 - 10000 DZD", value: "5000-10000" },
-  { label: "Over 10000 DZD", value: "10000+" },
-]
+interface ProductFilterOptions {
+  categories: string[]
+  sizes: string[]
+  colors: string[]
+}
 
-const sortOptions = [
-  { label: "Recommended", value: "recommended" },
-  { label: "Newest", value: "newest" },
+interface ArticleFiltersProps {
+  filters: ProductFiltersState
+  options: ProductFilterOptions
+  foundCount: number
+  onFiltersChange: (next: ProductFiltersState) => void
+  onClear: () => void
+}
+
+const sortOptions: { label: string; value: ProductFiltersState["sort"] }[] = [
+  { label: "Newest first", value: "newest" },
   { label: "Price: Low to High", value: "price-asc" },
   { label: "Price: High to Low", value: "price-desc" },
   { label: "Best Selling", value: "bestselling" },
 ]
 
-interface ArticleFiltersProps {
-  onFiltersChange?: (filters: { category: string; price: string; sort: string }) => void
-}
-
-export function ArticleFilters({ onFiltersChange }: ArticleFiltersProps) {
-  const [selectedCategory, setSelectedCategory] = useState("All")
-  const [selectedPrice, setSelectedPrice] = useState("all")
-  const [selectedSort, setSelectedSort] = useState("recommended")
-  const [showFilters, setShowFilters] = useState(false)
-
-  /** Avoid unstable `onFiltersChange` identity causing an infinite parent↔child update loop */
-  const onFiltersChangeRef = useRef(onFiltersChange)
-  onFiltersChangeRef.current = onFiltersChange
-
+export function ArticleFilters({ filters, options, foundCount, onFiltersChange, onClear }: ArticleFiltersProps) {
   const activeFiltersCount = [
-    selectedCategory !== "All" ? 1 : 0,
-    selectedPrice !== "all" ? 1 : 0,
-    selectedSort !== "recommended" ? 1 : 0,
+    filters.search.trim() !== "" ? 1 : 0,
+    filters.category !== "all" ? 1 : 0,
+    filters.minPrice.trim() !== "" || filters.maxPrice.trim() !== "" ? 1 : 0,
+    filters.size !== "all" ? 1 : 0,
+    filters.color !== "all" ? 1 : 0,
+    filters.sort !== "newest" ? 1 : 0,
   ].reduce((a, b) => a + b, 0)
-
-  // Notify parent of filter changes (only when actual filter state changes)
-  useEffect(() => {
-    onFiltersChangeRef.current?.({
-      category: selectedCategory,
-      price: selectedPrice,
-      sort: selectedSort,
-    })
-  }, [selectedCategory, selectedPrice, selectedSort])
-
-  const clearFilters = () => {
-    setSelectedCategory("All")
-    setSelectedPrice("all")
-    setSelectedSort("recommended")
-  }
 
   return (
     <div className="space-y-4">
-      {/* Category Pills */}
-      <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-        {categories.map((category) => (
-          <button
-            key={category}
-            onClick={() => setSelectedCategory(category)}
-            className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all ${
-              selectedCategory === category
-                ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
-            }`}
-          >
-            {category}
-          </button>
-        ))}
-      </div>
-
-      {/* Filter Bar */}
       <div className="flex items-center gap-3 flex-wrap">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowFilters(!showFilters)}
-          className="gap-2 rounded-full"
-        >
+        <div className="relative flex-1 min-w-[14rem]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <input
+            value={filters.search}
+            onChange={(e) => onFiltersChange({ ...filters, search: e.target.value })}
+            placeholder="Search by product name..."
+            className="w-full bg-secondary border border-border rounded-full pl-9 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        </div>
+
+        <Button variant="outline" size="sm" className="gap-2 rounded-full" disabled>
           <SlidersHorizontal className="w-4 h-4" />
           Filters
           {activeFiltersCount > 0 && (
@@ -102,27 +67,10 @@ export function ArticleFilters({ onFiltersChange }: ArticleFiltersProps) {
           )}
         </Button>
 
-        {/* Price Dropdown */}
         <div className="relative">
           <select
-            value={selectedPrice}
-            onChange={(e) => setSelectedPrice(e.target.value)}
-            className="appearance-none bg-secondary border border-border rounded-full px-4 py-2 pr-8 text-sm font-medium text-foreground cursor-pointer hover:bg-secondary/80 transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            {priceRanges.map((range) => (
-              <option key={range.value} value={range.value}>
-                {range.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-        </div>
-
-        {/* Sort Dropdown */}
-        <div className="relative ml-auto">
-          <select
-            value={selectedSort}
-            onChange={(e) => setSelectedSort(e.target.value)}
+            value={filters.sort}
+            onChange={(e) => onFiltersChange({ ...filters, sort: e.target.value as ProductFiltersState["sort"] })}
             className="appearance-none bg-secondary border border-border rounded-full px-4 py-2 pr-8 text-sm font-medium text-foreground cursor-pointer hover:bg-secondary/80 transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
           >
             {sortOptions.map((option) => (
@@ -134,60 +82,105 @@ export function ArticleFilters({ onFiltersChange }: ArticleFiltersProps) {
           <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
         </div>
 
-        {/* Clear Filters */}
         {activeFiltersCount > 0 && (
-          <button
-            onClick={clearFilters}
-            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
+          <button onClick={onClear} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
             <X className="w-4 h-4" />
-            Clear
+            Clear all
           </button>
         )}
       </div>
 
-      {/* Expanded Filters Panel */}
-      {showFilters && (
-        <div className="p-4 bg-card border border-border rounded-xl space-y-4">
-          <div>
-            <h4 className="text-sm font-medium text-foreground mb-2">Price Range</h4>
-            <div className="flex flex-wrap gap-2">
-              {priceRanges.map((range) => (
-                <button
-                  key={range.value}
-                  onClick={() => setSelectedPrice(range.value)}
-                  className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
-                    selectedPrice === range.value
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-secondary text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {range.label}
-                </button>
-              ))}
-            </div>
-          </div>
+      <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+        <button
+          onClick={() => onFiltersChange({ ...filters, category: "all" })}
+          className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+            filters.category === "all"
+              ? "bg-primary text-primary-foreground"
+              : "bg-secondary text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
+          }`}
+        >
+          All
+        </button>
+        {options.categories.map((category) => (
+          <button
+            key={category}
+            onClick={() => onFiltersChange({ ...filters, category })}
+            className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+              filters.category === category
+                ? "bg-primary text-primary-foreground"
+                : "bg-secondary text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
+            }`}
+          >
+            {category}
+          </button>
+        ))}
+      </div>
 
-          <div>
-            <h4 className="text-sm font-medium text-foreground mb-2">Sort By</h4>
-            <div className="flex flex-wrap gap-2">
-              {sortOptions.map((option) => (
-                <button
-                  key={option.value}
-                  onClick={() => setSelectedSort(option.value)}
-                  className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
-                    selectedSort === option.value
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-secondary text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
+      <div className="p-4 bg-card border border-border rounded-xl grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Min price (DZD)</label>
+          <input
+            type="number"
+            min={0}
+            value={filters.minPrice}
+            onChange={(e) => onFiltersChange({ ...filters, minPrice: e.target.value })}
+            className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            placeholder="0"
+          />
         </div>
-      )}
+
+        <div>
+          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Max price (DZD)</label>
+          <input
+            type="number"
+            min={0}
+            value={filters.maxPrice}
+            onChange={(e) => onFiltersChange({ ...filters, maxPrice: e.target.value })}
+            className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            placeholder="Any"
+          />
+        </div>
+
+        <div className="relative">
+          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Size</label>
+          <select
+            value={filters.size}
+            onChange={(e) => onFiltersChange({ ...filters, size: e.target.value })}
+            className="w-full appearance-none bg-secondary border border-border rounded-lg px-3 py-2 pr-8 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="all">All sizes</option>
+            {options.sizes.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="absolute right-3 top-[2.1rem] w-4 h-4 text-muted-foreground pointer-events-none" />
+        </div>
+
+        <div className="relative">
+          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Color</label>
+          <select
+            value={filters.color}
+            onChange={(e) => onFiltersChange({ ...filters, color: e.target.value })}
+            className="w-full appearance-none bg-secondary border border-border rounded-lg px-3 py-2 pr-8 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="all">All colors</option>
+            {options.colors.map((color) => (
+              <option key={color} value={color}>
+                {color}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="absolute right-3 top-[2.1rem] w-4 h-4 text-muted-foreground pointer-events-none" />
+        </div>
+
+        <div className="rounded-lg border border-dashed border-border bg-secondary/30 px-3 py-2 flex items-center justify-center">
+          <p className="text-sm text-muted-foreground">
+            <span className="font-semibold text-foreground">{foundCount}</span> products found
+          </p>
+        </div>
+      </div>
     </div>
   )
 }

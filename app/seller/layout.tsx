@@ -1,71 +1,110 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { useShops } from "@/lib/shops-context"
+import { useMessaging } from "@/lib/messaging-context"
+import { FEATURE_MESSAGING, FEATURE_REELS } from "@/lib/feature-flags"
 import {
   LayoutDashboard,
   Package,
   ShoppingCart,
   Tag,
-  Calendar,
   Settings,
   LogOut,
   Menu,
   X,
   Store,
   ChevronDown,
-  Bell,
-  Wallet,
+  MessageSquare,
   Video,
   User,
 } from "lucide-react"
-import { Button } from "@/components/ui/button"
 
-const navItems = [
+const navItemsAll = [
   { href: "/seller", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/seller/orders", icon: ShoppingCart, label: "Orders" },
+  { href: "/seller/messages", icon: MessageSquare, label: "Messages", feature: "messaging" as const },
   { href: "/seller/products", icon: Package, label: "Products" },
-  { href: "/seller/reels", icon: Video, label: "Reels" },
+  { href: "/seller/reels", icon: Video, label: "Reels", feature: "reels" as const },
   { href: "/seller/discounts", icon: Tag, label: "Discounts" },
   { href: "/seller/shop", icon: Store, label: "My Shop" },
   { href: "/seller/profile", icon: User, label: "Profile" },
   { href: "/seller/settings", icon: Settings, label: "Settings" },
 ]
 
+const navItems = navItemsAll.filter((item) => {
+  if (item.feature === "messaging" && !FEATURE_MESSAGING) return false
+  if (item.feature === "reels" && !FEATURE_REELS) return false
+  return true
+})
+
+type SellerLayoutAccess =
+  | "loading"
+  | "redirect-login"
+  | "redirect-home"
+  | "redirect-seller-dashboard"
+  | "pending-only"
+  | "full"
+
 export default function SellerLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { user, isLoading } = useAuth()
   const { getSellerShops } = useShops()
+  const { sellerUnreadCount } = useMessaging()
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
 
   const myShop = user ? getSellerShops(user.id)[0] : undefined
 
   const isPendingApprovalRoute = pathname === "/seller/pending-approval"
 
-  if (!isLoading && !user) {
-    router.push("/login")
-    return null
+  const access = useMemo((): SellerLayoutAccess => {
+    if (isLoading) return "loading"
+    if (!user) return "redirect-login"
+    if (isPendingApprovalRoute) {
+      if (user.profileRole !== "seller") return "redirect-home"
+      if (user.isSeller) return "redirect-seller-dashboard"
+      return "pending-only"
+    }
+    if (!user.isSeller && !user.isAdmin) return "redirect-home"
+    return "full"
+  }, [isLoading, user, isPendingApprovalRoute])
+
+  useEffect(() => {
+    if (access === "redirect-login") {
+      router.replace("/login")
+      return
+    }
+    if (access === "redirect-home") {
+      router.replace("/")
+      return
+    }
+    if (access === "redirect-seller-dashboard") {
+      router.replace("/seller")
+    }
+  }, [access, router])
+
+  if (access === "loading") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    )
   }
 
-  if (!isLoading && user && isPendingApprovalRoute) {
-    if (user.profileRole !== "seller") {
-      router.push("/")
-      return null
-    }
-    if (user.isSeller) {
-      router.push("/seller")
-      return null
-    }
+  if (access === "redirect-login" || access === "redirect-home" || access === "redirect-seller-dashboard") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">Redirecting…</p>
+      </div>
+    )
+  }
+
+  if (access === "pending-only") {
     return <div className="min-h-screen bg-background">{children}</div>
-  }
-
-  if (!isLoading && (!user || (!user.isSeller && !user.isAdmin))) {
-    router.push("/")
-    return null
   }
 
   return (
@@ -84,10 +123,22 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
           </div>
           <span className="font-semibold text-foreground">Seller Hub</span>
         </Link>
-        <button className="p-2 hover:bg-secondary rounded-lg transition-colors relative">
-          <Bell className="w-5 h-5 text-foreground" />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-accent rounded-full" />
-        </button>
+        {FEATURE_MESSAGING ? (
+          <Link
+            href="/seller/messages"
+            className="p-2 hover:bg-secondary rounded-lg transition-colors relative"
+            aria-label="Messages"
+          >
+            <MessageSquare className="w-5 h-5 text-foreground" />
+            {sellerUnreadCount > 0 ? (
+              <span className="absolute top-0.5 right-0.5 min-w-4 h-4 px-1 rounded-full bg-accent text-[10px] font-bold text-accent-foreground flex items-center justify-center">
+                {sellerUnreadCount > 9 ? "9+" : sellerUnreadCount}
+              </span>
+            ) : null}
+          </Link>
+        ) : (
+          <div className="w-10 h-10 shrink-0" aria-hidden />
+        )}
       </header>
 
       {/* Mobile Sidebar Overlay */}
@@ -145,6 +196,8 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
         <nav className="p-4 space-y-1">
           {navItems.map((item) => {
             const isActive = pathname === item.href
+            const showMsgBadge =
+              FEATURE_MESSAGING && item.href === "/seller/messages" && sellerUnreadCount > 0
             return (
               <Link
                 key={item.href}
@@ -156,8 +209,17 @@ export default function SellerLayout({ children }: { children: React.ReactNode }
                     : "text-muted-foreground hover:text-foreground hover:bg-secondary"
                 }`}
               >
-                <item.icon className="w-5 h-5" />
-                {item.label}
+                <item.icon className="w-5 h-5 shrink-0" />
+                <span className="flex-1">{item.label}</span>
+                {showMsgBadge ? (
+                  <span
+                    className={`text-xs font-semibold min-w-5 h-5 rounded-full flex items-center justify-center ${
+                      isActive ? "bg-primary-foreground/20 text-primary-foreground" : "bg-accent text-accent-foreground"
+                    }`}
+                  >
+                    {sellerUnreadCount > 99 ? "99+" : sellerUnreadCount}
+                  </span>
+                ) : null}
               </Link>
             )
           })}

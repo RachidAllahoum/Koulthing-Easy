@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Header } from "@/components/header"
@@ -9,11 +9,16 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Mail, Lock, ArrowRight } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
-import { resolvePostLoginPath } from "@/lib/post-login-redirect"
+import { resolvePostLoginPath, safeInternalRedirectPath } from "@/lib/post-login-redirect"
+
+function readRedirectQuery(): string | null {
+  return typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("redirect") : null
+}
 
 export default function LoginPage() {
   const router = useRouter()
-  const { login } = useAuth()
+  const { login, user, isLoading: authLoading } = useAuth()
+  const [registerHref, setRegisterHref] = useState("/register")
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
@@ -21,6 +26,38 @@ export default function LoginPage() {
     email: "",
     password: "",
   })
+
+  useEffect(() => {
+    const r = safeInternalRedirectPath(readRedirectQuery())
+    setRegisterHref(r ? `/register?redirect=${encodeURIComponent(r)}` : "/register")
+  }, [])
+
+  useEffect(() => {
+    if (authLoading || !user) return
+    let cancelled = false
+    void (async () => {
+      const defaultPath = await resolvePostLoginPath(user.id)
+      const wanted = safeInternalRedirectPath(readRedirectQuery())
+      const next =
+        wanted && !user.isAdmin ? wanted : defaultPath
+      if (!cancelled) router.replace(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [authLoading, user, router])
+
+  if (authLoading || user) {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <Header />
+        <main className="flex-1 flex items-center justify-center px-4">
+          <p className="text-muted-foreground">Redirecting…</p>
+        </main>
+        <Footer />
+      </div>
+    )
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -36,7 +73,11 @@ export default function LoginPage() {
       })
 
       const loggedIn = await login(emailToSend, passwordToSend)
-      const nextPath = await resolvePostLoginPath(loggedIn.id)
+      let nextPath = await resolvePostLoginPath(loggedIn.id)
+      const wanted = safeInternalRedirectPath(readRedirectQuery())
+      if (wanted && !loggedIn.isAdmin) {
+        nextPath = wanted
+      }
       router.push(nextPath)
     } catch (err) {
       console.error("[login.form] login failed", err)
@@ -169,7 +210,7 @@ export default function LoginPage() {
           {/* Sign Up Link */}
           <p className="text-center text-muted-foreground mt-6">
             Don&apos;t have an account?{" "}
-            <Link href="/register" className="text-accent font-medium hover:text-accent/80 transition-colors">
+            <Link href={registerHref} className="text-accent font-medium hover:text-accent/80 transition-colors">
               Create account
             </Link>
           </p>

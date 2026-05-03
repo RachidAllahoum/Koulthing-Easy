@@ -1,16 +1,14 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import {
   Store,
   Camera,
   Globe,
   Instagram,
   Facebook,
-  Twitter,
   MapPin,
   Phone,
-  Mail,
   Edit,
   Save,
   Package,
@@ -21,45 +19,69 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/lib/auth-context"
+import { useShops } from "@/lib/shops-context"
 import { supabase } from "@/lib/supabase-client"
 import { useToast } from "@/hooks/use-toast"
+import { uploadPublicImage } from "@/lib/storage-upload"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
+const SHOP_CATEGORIES = [
+  "Fashion",
+  "Electronics",
+  "Home",
+  "Beauty",
+  "Sports",
+  "Food",
+  "Health",
+  "Other",
+]
 
 interface ShopData {
   name: string
   description: string
   logo: string
-  banner: string
-  address: string
-  phone: string
-  email: string
-  website: string
+  cover: string
+  shop_category: string
+  street_address: string
+  city: string
+  wilaya: string
+  shop_phone: string
   instagram: string
   facebook: string
-  twitter: string
 }
 
 const emptyShopData: ShopData = {
   name: "",
   description: "",
   logo: "",
-  banner: "",
-  address: "",
-  phone: "",
-  email: "",
-  website: "",
+  cover: "",
+  shop_category: "",
+  street_address: "",
+  city: "",
+  wilaya: "",
+  shop_phone: "",
   instagram: "",
   facebook: "",
-  twitter: "",
 }
 
 export default function SellerShopPage() {
   const { user } = useAuth()
+  const { refresh: refreshShops } = useShops()
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [shopRowId, setShopRowId] = useState<string | null>(null)
   const [productCount, setProductCount] = useState(0)
   const [isEditing, setIsEditing] = useState(false)
   const [shopData, setShopData] = useState<ShopData>(emptyShopData)
+  const [uploading, setUploading] = useState<"logo" | "cover" | null>(null)
+  const logoInputRef = useRef<HTMLInputElement>(null)
+  const coverInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const load = async () => {
@@ -70,7 +92,9 @@ export default function SellerShopPage() {
       setLoading(true)
       const { data: shop, error } = await supabase
         .from("shops")
-        .select("id, name, description, logo_url, created_at")
+        .select(
+          "id, name, description, logo_url, cover_url, shop_category, street_address, city, wilaya, shop_phone, instagram_url, facebook_url, created_at",
+        )
         .eq("seller_id", user.id)
         .maybeSingle()
 
@@ -92,10 +116,17 @@ export default function SellerShopPage() {
 
       setShopRowId(shop.id)
       setShopData({
-        ...emptyShopData,
         name: shop.name,
         description: shop.description ?? "",
         logo: shop.logo_url ?? "",
+        cover: shop.cover_url ?? "",
+        shop_category: shop.shop_category ?? "",
+        street_address: shop.street_address ?? "",
+        city: shop.city ?? "",
+        wilaya: shop.wilaya ?? "",
+        shop_phone: shop.shop_phone ?? "",
+        instagram: shop.instagram_url ?? "",
+        facebook: shop.facebook_url ?? "",
       })
 
       const { count } = await supabase
@@ -109,6 +140,42 @@ export default function SellerShopPage() {
     load()
   }, [user?.id])
 
+  const uploadLogo = async (file: File) => {
+    if (!user) return
+    setUploading("logo")
+    try {
+      const url = await uploadPublicImage("shop-logos", user.id, file)
+      setShopData((d) => ({ ...d, logo: url }))
+      toast({ title: "Logo uploaded" })
+    } catch (e) {
+      toast({
+        title: "Logo upload failed",
+        description: e instanceof Error ? e.message : "Upload error",
+        variant: "destructive",
+      })
+    } finally {
+      setUploading(null)
+    }
+  }
+
+  const uploadCover = async (file: File) => {
+    if (!user) return
+    setUploading("cover")
+    try {
+      const url = await uploadPublicImage("shop-covers", user.id, file)
+      setShopData((d) => ({ ...d, cover: url }))
+      toast({ title: "Cover uploaded" })
+    } catch (e) {
+      toast({
+        title: "Cover upload failed",
+        description: e instanceof Error ? e.message : "Upload error",
+        variant: "destructive",
+      })
+    } finally {
+      setUploading(null)
+    }
+  }
+
   const handleSave = async () => {
     if (!shopRowId || !user) {
       setIsEditing(false)
@@ -117,8 +184,17 @@ export default function SellerShopPage() {
     const { error } = await supabase
       .from("shops")
       .update({
-        name: shopData.name,
-        description: shopData.description,
+        name: shopData.name.trim(),
+        description: shopData.description.trim(),
+        logo_url: shopData.logo.trim() || null,
+        cover_url: shopData.cover.trim() || null,
+        shop_category: shopData.shop_category.trim() || null,
+        street_address: shopData.street_address.trim() || null,
+        city: shopData.city.trim() || null,
+        wilaya: shopData.wilaya.trim() || null,
+        shop_phone: shopData.shop_phone.trim() || null,
+        instagram_url: shopData.instagram.trim() || null,
+        facebook_url: shopData.facebook.trim() || null,
       })
       .eq("id", shopRowId)
       .eq("seller_id", user.id)
@@ -127,6 +203,7 @@ export default function SellerShopPage() {
       toast({ title: "Save failed", description: error.message, variant: "destructive" })
       return
     }
+    await refreshShops()
     setIsEditing(false)
     toast({ title: "Shop updated", description: "Your shop details were saved." })
   }
@@ -152,13 +229,36 @@ export default function SellerShopPage() {
 
   return (
     <div className="p-6 lg:p-8">
+      <input
+        ref={logoInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          e.target.value = ""
+          if (f) void uploadLogo(f)
+        }}
+      />
+      <input
+        ref={coverInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          e.target.value = ""
+          if (f) void uploadCover(f)
+        }}
+      />
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <h1 className="text-2xl font-bold text-foreground">My Shop</h1>
-          <p className="text-muted-foreground">Manage your shop profile (data from your approved application)</p>
+          <p className="text-muted-foreground">Details from your application—edit anytime. Changes appear on your public shop page.</p>
         </div>
         {isEditing ? (
-          <Button className="rounded-xl gap-2" onClick={handleSave}>
+          <Button className="rounded-xl gap-2" onClick={() => void handleSave()}>
             <Save className="w-4 h-4" />
             Save Changes
           </Button>
@@ -174,15 +274,18 @@ export default function SellerShopPage() {
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="relative h-40 bg-gradient-to-r from-primary/20 to-accent/20">
-              {isEditing && (
-                <button
-                  type="button"
-                  className="absolute right-4 top-4 p-2 bg-card/80 backdrop-blur rounded-lg hover:bg-card transition-colors opacity-50 cursor-not-allowed"
-                  title="Banner upload coming soon"
-                >
-                  <Camera className="w-5 h-5 text-foreground" />
-                </button>
-              )}
+              {shopData.cover ? (
+                <img src={shopData.cover} alt="" className="w-full h-full object-cover" />
+              ) : null}
+              <button
+                type="button"
+                disabled={uploading !== null}
+                onClick={() => coverInputRef.current?.click()}
+                className="absolute right-4 top-4 p-2 bg-card/80 backdrop-blur rounded-lg hover:bg-card transition-colors disabled:opacity-40"
+                title="Upload cover image"
+              >
+                <Camera className="w-5 h-5 text-foreground" />
+              </button>
             </div>
             <div className="px-6 pb-6">
               <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-12">
@@ -194,15 +297,15 @@ export default function SellerShopPage() {
                       <Store className="w-10 h-10 text-muted-foreground" />
                     )}
                   </div>
-                  {isEditing && (
-                    <button
-                      type="button"
-                      className="absolute -right-1 -bottom-1 p-1.5 bg-primary text-primary-foreground rounded-lg opacity-50 cursor-not-allowed"
-                      title="Logo upload coming soon"
-                    >
-                      <Camera className="w-4 h-4" />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    disabled={uploading !== null}
+                    onClick={() => logoInputRef.current?.click()}
+                    className="absolute -right-1 -bottom-1 p-1.5 bg-primary text-primary-foreground rounded-lg disabled:opacity-40"
+                    title="Upload logo"
+                  >
+                    <Camera className="w-4 h-4" />
+                  </button>
                 </div>
                 <div className="flex-1">
                   {isEditing ? (
@@ -231,6 +334,29 @@ export default function SellerShopPage() {
             <h3 className="font-semibold text-foreground mb-4">Shop Details</h3>
             <div className="space-y-4">
               <div>
+                <label className="block text-sm font-medium text-muted-foreground mb-2">Category</label>
+                {isEditing ? (
+                  <Select
+                    value={shopData.shop_category ? shopData.shop_category : undefined}
+                    onValueChange={(v) => setShopData({ ...shopData, shop_category: v })}
+                  >
+                    <SelectTrigger className="h-11 rounded-xl">
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SHOP_CATEGORIES.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {c}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-foreground">{shopData.shop_category || "—"}</p>
+                )}
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-muted-foreground mb-2">Description</label>
                 {isEditing ? (
                   <textarea
@@ -243,69 +369,59 @@ export default function SellerShopPage() {
                 )}
               </div>
 
-              <p className="text-xs text-muted-foreground">
-                Contact fields below are optional and stored only in this form until you add columns in the database.
-              </p>
-
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-muted-foreground mb-2">
                     <MapPin className="w-4 h-4 inline mr-1" />
-                    Address
+                    Street
                   </label>
                   {isEditing ? (
                     <Input
-                      value={shopData.address}
-                      onChange={(e) => setShopData({ ...shopData, address: e.target.value })}
+                      value={shopData.street_address}
+                      onChange={(e) => setShopData({ ...shopData, street_address: e.target.value })}
                       className="h-11 rounded-xl"
                     />
                   ) : (
-                    <p className="text-foreground">{shopData.address || "—"}</p>
+                    <p className="text-foreground">{shopData.street_address || "—"}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-muted-foreground mb-2">City</label>
+                  {isEditing ? (
+                    <Input
+                      value={shopData.city}
+                      onChange={(e) => setShopData({ ...shopData, city: e.target.value })}
+                      className="h-11 rounded-xl"
+                    />
+                  ) : (
+                    <p className="text-foreground">{shopData.city || "—"}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-muted-foreground mb-2">Wilaya</label>
+                  {isEditing ? (
+                    <Input
+                      value={shopData.wilaya}
+                      onChange={(e) => setShopData({ ...shopData, wilaya: e.target.value })}
+                      className="h-11 rounded-xl"
+                    />
+                  ) : (
+                    <p className="text-foreground">{shopData.wilaya || "—"}</p>
                   )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-muted-foreground mb-2">
                     <Phone className="w-4 h-4 inline mr-1" />
-                    Phone
+                    Shop phone
                   </label>
                   {isEditing ? (
                     <Input
-                      value={shopData.phone}
-                      onChange={(e) => setShopData({ ...shopData, phone: e.target.value })}
+                      value={shopData.shop_phone}
+                      onChange={(e) => setShopData({ ...shopData, shop_phone: e.target.value })}
                       className="h-11 rounded-xl"
                     />
                   ) : (
-                    <p className="text-foreground">{shopData.phone || "—"}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-muted-foreground mb-2">
-                    <Mail className="w-4 h-4 inline mr-1" />
-                    Email
-                  </label>
-                  {isEditing ? (
-                    <Input
-                      value={shopData.email}
-                      onChange={(e) => setShopData({ ...shopData, email: e.target.value })}
-                      className="h-11 rounded-xl"
-                    />
-                  ) : (
-                    <p className="text-foreground">{shopData.email || "—"}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-muted-foreground mb-2">
-                    <Globe className="w-4 h-4 inline mr-1" />
-                    Website
-                  </label>
-                  {isEditing ? (
-                    <Input
-                      value={shopData.website}
-                      onChange={(e) => setShopData({ ...shopData, website: e.target.value })}
-                      className="h-11 rounded-xl"
-                    />
-                  ) : (
-                    <p className="text-foreground">{shopData.website || "—"}</p>
+                    <p className="text-foreground">{shopData.shop_phone || "—"}</p>
                   )}
                 </div>
               </div>
@@ -314,11 +430,11 @@ export default function SellerShopPage() {
 
           <div className="bg-card border border-border rounded-xl p-6">
             <h3 className="font-semibold text-foreground mb-4">Social Links</h3>
-            <div className="grid sm:grid-cols-3 gap-4">
+            <div className="grid sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-muted-foreground mb-2">
                   <Instagram className="w-4 h-4 inline mr-1" />
-                  Instagram
+                  Instagram URL or handle
                 </label>
                 {isEditing ? (
                   <Input
@@ -333,7 +449,7 @@ export default function SellerShopPage() {
               <div>
                 <label className="block text-sm font-medium text-muted-foreground mb-2">
                   <Facebook className="w-4 h-4 inline mr-1" />
-                  Facebook
+                  Facebook URL or handle
                 </label>
                 {isEditing ? (
                   <Input
@@ -345,22 +461,11 @@ export default function SellerShopPage() {
                   <p className="text-foreground">{shopData.facebook || "—"}</p>
                 )}
               </div>
-              <div>
-                <label className="block text-sm font-medium text-muted-foreground mb-2">
-                  <Twitter className="w-4 h-4 inline mr-1" />
-                  Twitter
-                </label>
-                {isEditing ? (
-                  <Input
-                    value={shopData.twitter}
-                    onChange={(e) => setShopData({ ...shopData, twitter: e.target.value })}
-                    className="h-11 rounded-xl"
-                  />
-                ) : (
-                  <p className="text-foreground">{shopData.twitter || "—"}</p>
-                )}
-              </div>
             </div>
+            <p className="text-xs text-muted-foreground mt-4 flex items-center gap-1">
+              <Globe className="w-3 h-3" />
+              Logo and cover upload use Supabase Storage; save after editing text fields.
+            </p>
           </div>
         </div>
 

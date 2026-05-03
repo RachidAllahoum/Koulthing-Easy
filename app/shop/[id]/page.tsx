@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { Header } from "@/components/header"
@@ -18,32 +18,22 @@ import {
   Star,
   MapPin,
   Users,
-  Bell,
-  BellOff,
   Share2,
   MessageCircle,
-  Store,
   ExternalLink,
   Package,
+  Phone,
 } from "lucide-react"
-
-const COVERS = [
-  "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=1200&h=400&fit=crop",
-  "https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=1200&h=400&fit=crop",
-  "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=1200&h=400&fit=crop",
-]
-
-function coverForId(id: string) {
-  let h = 0
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
-  return COVERS[h % COVERS.length]
-}
+import { socialHref } from "@/lib/social-url"
+import { useShopFollow } from "@/lib/use-shop-follow"
+import { ShopFollowHeartButton, ShopFollowHeroButtons } from "@/components/shop-follow-controls"
+import { FEATURE_MESSAGING, FEATURE_REELS } from "@/lib/feature-flags"
 
 export default function ShopPage() {
   const router = useRouter()
   const routeParams = useParams<{ id: string }>()
   const { isAuthenticated, user } = useAuth()
-  const { createConversation, currentConversation } = useMessaging()
+  const { openThread, closeThread } = useMessaging()
   const shopId = routeParams.id ?? ""
 
   const [loading, setLoading] = useState(true)
@@ -52,13 +42,20 @@ export default function ShopPage() {
     name: string
     description: string | null
     logo_url: string | null
+    cover_url: string | null
+    shop_category: string | null
+    street_address: string | null
+    city: string | null
+    wilaya: string | null
+    shop_phone: string | null
+    instagram_url: string | null
+    facebook_url: string | null
     created_at: string
     seller_id: string
   } | null>(null)
   const [articles, setArticles] = useState<Article[]>([])
   const [reelCount, setReelCount] = useState(0)
 
-  const [isFollowing, setIsFollowing] = useState(false)
   const [activeTab, setActiveTab] = useState("products")
   const [chatOpen, setChatOpen] = useState(false)
   const [showLoginPrompt, setShowLoginPrompt] = useState(false)
@@ -68,7 +65,9 @@ export default function ShopPage() {
       setLoading(true)
       const { data: shop, error: shopError } = await supabase
         .from("shops")
-        .select("id, name, description, logo_url, created_at, seller_id, is_active")
+        .select(
+          "id, name, description, logo_url, cover_url, shop_category, street_address, city, wilaya, shop_phone, instagram_url, facebook_url, created_at, seller_id, is_active",
+        )
         .eq("id", shopId)
         .maybeSingle()
 
@@ -91,7 +90,9 @@ export default function ShopPage() {
 
       const { data: prodRows, error: prodError } = await supabase
         .from("products")
-        .select("id, shop_id, name, description, price, sizes_array, colors_array, stock, images_array, created_at")
+        .select(
+          "id, shop_id, name, description, price, base_price, sizes_array, colors_array, stock, images_array, created_at, product_variants ( id, size, color, sku, price, stocks ( quantity_total ) )",
+        )
         .eq("shop_id", shopId)
         .order("created_at", { ascending: false })
 
@@ -100,12 +101,18 @@ export default function ShopPage() {
         setArticles([])
       } else {
         setArticles(
-          (prodRows as ProductRow[] | null)?.map((r) => mapProductToArticle({ ...r, shops: { name: shop.name } })) ?? [],
+          (prodRows as ProductRow[] | null)?.map((r) =>
+            mapProductToArticle({ ...r, shops: { name: shop.name, seller_id: shop.seller_id } }),
+          ) ?? [],
         )
       }
 
-      const { count } = await supabase.from("reels").select("id", { count: "exact", head: true }).eq("shop_id", shopId)
-      setReelCount(count ?? 0)
+      if (FEATURE_REELS) {
+        const { count } = await supabase.from("reels").select("id", { count: "exact", head: true }).eq("shop_id", shopId)
+        setReelCount(count ?? 0)
+      } else {
+        setReelCount(0)
+      }
 
       setLoading(false)
     }
@@ -113,38 +120,55 @@ export default function ShopPage() {
     load()
   }, [shopId])
 
+  const follow = useShopFollow(shopId, shopRow?.seller_id ?? null)
+
   const shop = shopRow
-    ? {
-        id: shopRow.id,
-        name: shopRow.name,
-        description:
-          shopRow.description ||
-          "Discover products from this shop. More details will appear here as the seller fills out their profile.",
-        category: "Shop",
-        coverImage: coverForId(shopRow.id),
-        logo: shopRow.logo_url || "",
-        rating: 4.5,
-        reviewCount: 0,
-        followers: 0,
-        following: false,
-        location: "Algeria",
-        joinedDate: new Date(shopRow.created_at).toLocaleString(undefined, { month: "long", year: "numeric" }),
-        totalProducts: articles.length,
-        responseRate: "—",
-        responseTime: "—",
-        socials: {
-          instagram: "",
-          tiktok: "",
-        },
-        sellerId: shopRow.seller_id,
-      }
+    ? (() => {
+        const street = shopRow.street_address?.trim() ?? ""
+        const city = shopRow.city?.trim() ?? ""
+        const wilaya = shopRow.wilaya?.trim() ?? ""
+        const line1 = [street, city].filter(Boolean).join(", ")
+        const locationLabel = [line1, wilaya].filter(Boolean).join(" · ") || "—"
+        const ig = socialHref(shopRow.instagram_url)
+        const fb = socialHref(shopRow.facebook_url)
+        return {
+          id: shopRow.id,
+          name: shopRow.name,
+          description: shopRow.description?.trim() || "This shop has not added a description yet.",
+          category: shopRow.shop_category?.trim() || "Shop",
+          coverImage: shopRow.cover_url?.trim() || "",
+          logo: shopRow.logo_url?.trim() || "",
+          shopPhone: shopRow.shop_phone?.trim() || "",
+          rating: 4.5,
+          reviewCount: 0,
+          followers: 0,
+          following: false,
+          location: locationLabel,
+          joinedDate: new Date(shopRow.created_at).toLocaleString(undefined, { month: "long", year: "numeric" }),
+          totalProducts: articles.length,
+          responseRate: "—",
+          responseTime: "—",
+          socials: {
+            instagram: ig,
+            facebook: fb,
+          },
+          sellerId: shopRow.seller_id,
+        }
+      })()
     : null
 
-  const tabs = [
-    { id: "products", label: "Products", count: articles.length },
-    { id: "videos", label: "Videos", count: reelCount },
-    { id: "reviews", label: "Reviews", count: 0 },
-  ]
+  const tabs = useMemo(
+    () => [
+      { id: "products", label: "Products", count: articles.length },
+      ...(FEATURE_REELS ? [{ id: "videos", label: "Videos", count: reelCount }] : []),
+      { id: "reviews", label: "Reviews", count: 0 },
+    ],
+    [articles.length, reelCount],
+  )
+
+  useEffect(() => {
+    if (!FEATURE_REELS && activeTab === "videos") setActiveTab("products")
+  }, [activeTab])
 
   const handleMessageSeller = () => {
     if (!shop) return
@@ -158,17 +182,14 @@ export default function ShopPage() {
       return
     }
 
-    const conversation = createConversation(
-      user.id,
-      user.name,
-      "seller_" + shop.sellerId,
-      shop.name,
-      undefined,
-      undefined,
-      shop.id,
-      shop.name,
-    )
-    setChatOpen(true)
+    void openThread({
+      shopId: shop.id,
+      sellerId: shop.sellerId,
+      buyerId: user.id,
+      shopName: shop.name,
+      sellerName: shop.name,
+      buyerName: user.name,
+    }).then(() => setChatOpen(true))
   }
 
   if (loading) {
@@ -205,8 +226,13 @@ export default function ShopPage() {
 
       <main className="flex-1">
         <div className="relative">
-          <div className="h-48 md:h-64 bg-gradient-to-br from-primary/20 to-accent/20 overflow-hidden">
-            <img src={shop.coverImage} alt={`${shop.name} cover`} className="w-full h-full object-cover" />
+          <div className="relative h-48 md:h-64 bg-gradient-to-br from-primary/20 to-accent/20 overflow-hidden">
+            {shop.coverImage ? (
+              <img src={shop.coverImage} alt={`${shop.name} cover`} className="w-full h-full object-cover" />
+            ) : null}
+            <div className="absolute top-4 left-4 md:top-5 md:left-6">
+              <ShopFollowHeartButton vm={follow} />
+            </div>
           </div>
 
           <div className="container mx-auto px-4 md:px-6">
@@ -230,28 +256,33 @@ export default function ShopPage() {
                         <span className="px-2 py-0.5 bg-accent/10 text-accent text-xs font-medium rounded-full">{shop.category}</span>
                       </div>
                       <div className="flex items-center justify-center md:justify-start gap-1 text-sm text-muted-foreground mb-2">
-                        <MapPin className="w-4 h-4" />
+                        <MapPin className="w-4 h-4 shrink-0" />
                         <span>{shop.location}</span>
                       </div>
+                      {shop.shopPhone ? (
+                        <div className="flex items-center justify-center md:justify-start gap-1 text-sm text-muted-foreground mb-2">
+                          <Phone className="w-4 h-4 shrink-0" />
+                          <a href={`tel:${shop.shopPhone.replace(/\s/g, "")}`} className="hover:text-foreground">
+                            {shop.shopPhone}
+                          </a>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="flex items-center justify-center gap-3">
-                      <Button size="lg" variant={isFollowing ? "outline" : "default"} className="rounded-full gap-2" onClick={() => setIsFollowing(!isFollowing)}>
-                        {isFollowing ? (
-                          <>
-                            <BellOff className="w-4 h-4" />
-                            Following
-                          </>
-                        ) : (
-                          <>
-                            <Bell className="w-4 h-4" />
-                            Follow
-                          </>
-                        )}
-                      </Button>
-                      <Button size="lg" variant="outline" className="rounded-full" onClick={handleMessageSeller} title="Message this seller">
-                        <MessageCircle className="w-4 h-4" />
-                      </Button>
+                      <ShopFollowHeroButtons vm={follow} />
+                      {FEATURE_MESSAGING ? (
+                        <Button
+                          size="lg"
+                          variant="outline"
+                          className="rounded-full gap-2"
+                          onClick={handleMessageSeller}
+                          title="Message this seller"
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                          <span className="hidden sm:inline">Message</span>
+                        </Button>
+                      ) : null}
                       <Button size="lg" variant="outline" className="rounded-full">
                         <Share2 className="w-4 h-4" />
                       </Button>
@@ -266,7 +297,7 @@ export default function ShopPage() {
                     </div>
                     <div className="flex items-center gap-1 text-muted-foreground">
                       <Users className="w-5 h-5" />
-                      <span className="font-semibold text-foreground">{shop.followers.toLocaleString()}</span>
+                      <span className="font-semibold text-foreground">{follow.followerCount.toLocaleString()}</span>
                       <span className="text-sm">followers</span>
                     </div>
                     <div className="flex items-center gap-1 text-muted-foreground">
@@ -310,9 +341,9 @@ export default function ShopPage() {
               <div className="bg-card border border-border rounded-xl p-5">
                 <h3 className="font-semibold text-foreground mb-3">Follow Us</h3>
                 <div className="space-y-2">
-                  {shop.socials.instagram && (
+                  {shop.socials.instagram ? (
                     <a
-                      href={`https://instagram.com/${shop.socials.instagram}`}
+                      href={shop.socials.instagram}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center justify-between p-3 bg-secondary rounded-lg hover:bg-secondary/80 transition-colors"
@@ -320,19 +351,19 @@ export default function ShopPage() {
                       <span className="text-sm font-medium text-foreground">Instagram</span>
                       <ExternalLink className="w-4 h-4 text-muted-foreground" />
                     </a>
-                  )}
-                  {shop.socials.tiktok && (
+                  ) : null}
+                  {shop.socials.facebook ? (
                     <a
-                      href={`https://tiktok.com/@${shop.socials.tiktok}`}
+                      href={shop.socials.facebook}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center justify-between p-3 bg-secondary rounded-lg hover:bg-secondary/80 transition-colors"
                     >
-                      <span className="text-sm font-medium text-foreground">TikTok</span>
+                      <span className="text-sm font-medium text-foreground">Facebook</span>
                       <ExternalLink className="w-4 h-4 text-muted-foreground" />
                     </a>
-                  )}
-                  {!shop.socials.instagram && !shop.socials.tiktok && (
+                  ) : null}
+                  {!shop.socials.instagram && !shop.socials.facebook && (
                     <p className="text-sm text-muted-foreground">Social links not provided yet.</p>
                   )}
                 </div>
@@ -357,7 +388,9 @@ export default function ShopPage() {
 
               {activeTab === "products" && <ArticleGrid title="All Products" showBadges={false} articles={articles} />}
 
-              {activeTab === "videos" && <VideoReels title="Shop Reels" shopId={shopId} />}
+              {FEATURE_REELS && activeTab === "videos" ? (
+                <VideoReels title="Shop Reels" shopId={shopId} />
+              ) : null}
 
               {activeTab === "reviews" && (
                 <div className="space-y-4">
@@ -374,7 +407,7 @@ export default function ShopPage() {
         </div>
       </main>
 
-      {showLoginPrompt && (
+      {FEATURE_MESSAGING && showLoginPrompt ? (
         <div className="fixed inset-0 bg-foreground/50 flex items-center justify-center z-50 p-4">
           <div className="bg-card rounded-2xl p-6 w-full max-w-sm">
             <h2 className="text-lg font-semibold text-foreground mb-2">Login Required</h2>
@@ -389,9 +422,17 @@ export default function ShopPage() {
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
-      {currentConversation && <ChatModal conversation={currentConversation} isOpen={chatOpen} onClose={() => setChatOpen(false)} />}
+      {FEATURE_MESSAGING ? (
+        <ChatModal
+          isOpen={chatOpen}
+          onClose={() => {
+            setChatOpen(false)
+            closeThread()
+          }}
+        />
+      ) : null}
 
       <Footer />
     </div>

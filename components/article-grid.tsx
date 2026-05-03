@@ -1,12 +1,15 @@
 "use client"
 
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { Heart, Star, Sparkles, TrendingUp, Megaphone } from "lucide-react"
-import { useState, useMemo } from "react"
-import { filterArticles, type Article } from "@/lib/filter-utils"
+import { NoProductImage } from "@/components/no-uploaded-media"
+import type { Article } from "@/lib/filter-utils"
 import { useCart } from "@/lib/cart-context"
 import { useAuth } from "@/lib/auth-context"
+import { useWishlist } from "@/lib/wishlist-context"
+import { useShopFollow } from "@/lib/use-shop-follow"
+import { ShopFollowHeartButton } from "@/components/shop-follow-controls"
 
 function BadgeIcon({ badge }: { badge: Article["badge"] }) {
   switch (badge) {
@@ -34,40 +37,43 @@ function BadgeLabel({ badge }: { badge: Article["badge"] }) {
   }
 }
 
+function ArticleShopLine({ article, onGoShop }: { article: Article; onGoShop: (e: React.MouseEvent) => void }) {
+  const followVm = useShopFollow(article.shopId, article.shopSellerId ?? null)
+  return (
+    <div className="flex items-center gap-1 min-w-0">
+      <button
+        type="button"
+        onClick={onGoShop}
+        className="text-xs text-muted-foreground hover:text-accent transition-colors truncate min-w-0 text-left"
+      >
+        {article.shopName}
+      </button>
+      <ShopFollowHeartButton vm={followVm} className="w-8 h-8 shrink-0 [&_svg]:w-3.5 [&_svg]:h-3.5" />
+    </div>
+  )
+}
+
 interface ArticleGridProps {
   title: string
   showBadges?: boolean
   articles?: Article[]
-  category?: string
-  priceRange?: string
-  sortBy?: string
 }
 
-export function ArticleGrid({ title, showBadges = true, articles, category = "All", priceRange = "all", sortBy = "recommended" }: ArticleGridProps) {
+export function ArticleGrid({ title, showBadges = true, articles }: ArticleGridProps) {
   const router = useRouter()
+  const pathname = usePathname()
   const { addItem } = useCart()
-  const { isAuthenticated, user } = useAuth()
-  const [favorites, setFavorites] = useState<Set<string>>(new Set())
-  const canUseCart = isAuthenticated && user?.profileRole === "buyer"
+  const { user } = useAuth()
+  const { isSaved, toggleWishlist } = useWishlist()
+  const canUseCart = !user || !user.isAdmin
   
-  // Apply filters to articles
-  const displayArticles = useMemo(() => {
-    const baseArticles = articles ?? []
-    return filterArticles(baseArticles, category, priceRange, sortBy)
-  }, [articles, category, priceRange, sortBy])
+  const displayArticles = articles ?? []
 
-  const toggleFavorite = (id: string, e: React.MouseEvent) => {
+  const onWishlistClick = (productId: string, e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setFavorites((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
-      return next
-    })
+    const returnTo = pathname?.startsWith("/") ? pathname : "/articles"
+    void toggleWishlist(productId, returnTo)
   }
 
   const navigateToShop = (shopId: string, e: React.MouseEvent) => {
@@ -76,15 +82,27 @@ export function ArticleGrid({ title, showBadges = true, articles, category = "Al
     router.push(`/shop/${shopId}`)
   }
 
+  const isOutOfStock = (a: Article) => (a.stock ?? 0) <= 0
+
   const quickAdd = (article: Article, e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     if (!canUseCart) {
-      alert("Only buyers can use shopping cart")
+      alert("Admin accounts cannot use the shopping cart")
       return
     }
+    if (isOutOfStock(article)) {
+      return
+    }
+    const needsOptions =
+      (article.sizes?.length ?? 0) > 0 || (article.colors?.length ?? 0) > 0 || !article.defaultVariantId
+    if (needsOptions) {
+      router.push(`/product/${article.id}`)
+      return
+    }
+    const lineId = `${article.id}-v-${article.defaultVariantId}`
     addItem({
-      id: `${article.id}-default`,
+      id: lineId,
       productId: article.id,
       name: article.title,
       price: article.price,
@@ -92,6 +110,8 @@ export function ArticleGrid({ title, showBadges = true, articles, category = "Al
       shopId: article.shopId,
       image: article.image,
       quantity: 1,
+      variantId: article.defaultVariantId != null ? article.defaultVariantId : undefined,
+      sku: article.defaultVariantSku != null ? String(article.defaultVariantSku) : undefined,
     })
   }
 
@@ -112,16 +132,27 @@ export function ArticleGrid({ title, showBadges = true, articles, category = "Al
           <Link key={article.id} href={`/product/${article.id}`} className="group">
             <div className="relative rounded-xl overflow-hidden bg-secondary">
               {/* Article Image */}
-              <div className="aspect-square overflow-hidden bg-secondary">
-                <img
-                  src={article.image}
-                  alt={article.title}
-                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
-                />
+              <div className="aspect-square overflow-hidden bg-secondary flex items-center justify-center">
+                {article.image ? (
+                  <img
+                    src={article.image}
+                    alt={article.title}
+                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                  />
+                ) : (
+                  <NoProductImage />
+                )}
               </div>
 
+              {/* Out of stock */}
+              {isOutOfStock(article) && (
+                <div className="absolute top-3 left-3 z-[1] px-2 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border">
+                  Out of stock
+                </div>
+              )}
+
               {/* Badge */}
-              {showBadges && article.badge && (
+              {showBadges && article.badge && !isOutOfStock(article) && (
                 <div
                   className={`absolute top-3 left-3 flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
                     article.badge === "ad"
@@ -145,27 +176,36 @@ export function ArticleGrid({ title, showBadges = true, articles, category = "Al
 
               {/* Favorite Button */}
               <button
-                onClick={(e) => toggleFavorite(article.id, e)}
+                type="button"
+                title={isSaved(article.id) ? "Remove from wishlist" : "Save to wishlist"}
+                onClick={(e) => onWishlistClick(article.id, e)}
                 className={`absolute top-3 right-3 w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                  favorites.has(article.id)
+                  isSaved(article.id)
                     ? "bg-accent text-accent-foreground"
                     : "bg-card/80 text-foreground hover:bg-card"
                 }`}
               >
-                <Heart
-                  className={`w-4 h-4 ${favorites.has(article.id) ? "fill-current" : ""}`}
-                />
+                <Heart className={`w-4 h-4 ${isSaved(article.id) ? "fill-current" : ""}`} />
               </button>
 
-              {/* Quick Add */}
-              {canUseCart && (
+              {/* Quick Add / out of stock */}
+              {canUseCart && isOutOfStock(article) && (
+                <div className="absolute bottom-3 left-3 right-3">
+                  <div className="w-full py-2 text-center text-sm font-medium rounded-lg bg-muted text-muted-foreground border border-border cursor-default">
+                    Out of stock
+                  </div>
+                </div>
+              )}
+              {canUseCart && !isOutOfStock(article) && (
                 <div className="absolute bottom-3 left-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     type="button"
                     onClick={(e) => quickAdd(article, e)}
                     className="w-full py-2 bg-primary text-primary-foreground text-sm font-medium rounded-lg hover:bg-primary/90 transition-colors"
                   >
-                    Add to Cart
+                    {(article.sizes?.length ?? 0) > 0 || (article.colors?.length ?? 0) > 0
+                      ? "Choose options"
+                      : "Add to Cart"}
                   </button>
                 </div>
               )}
@@ -173,12 +213,7 @@ export function ArticleGrid({ title, showBadges = true, articles, category = "Al
 
             {/* Content */}
             <div className="space-y-1">
-              <button
-                onClick={(e) => navigateToShop(article.shopId, e)}
-                className="text-xs text-muted-foreground hover:text-accent transition-colors"
-              >
-                {article.shopName}
-              </button>
+              <ArticleShopLine article={article} onGoShop={(e) => navigateToShop(article.shopId, e)} />
               <h3 className="text-sm font-medium text-foreground line-clamp-2 group-hover:text-accent transition-colors">
                 {article.title}
               </h3>

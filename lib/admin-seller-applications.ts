@@ -1,6 +1,7 @@
 "use client"
 
 import { supabase } from "@/lib/supabase-client"
+import { shopPayloadFromSellerApplication } from "@/lib/shop-from-application"
 
 export type SellerApplicationRow = Record<string, unknown> & {
   id: string
@@ -139,13 +140,7 @@ export async function approveSellerApplication(applicationId: string, reviewedBy
 
   const { data: shopRow, error: createShopError } = await supabase
     .from("shops")
-    .insert({
-      seller_id: userId,
-      name: (app.shop_name as string) ?? "Shop",
-      description: (app.description as string | null) ?? "",
-      logo_url: (app.logo_url as string | null) ?? null,
-      is_active: true,
-    })
+    .insert(shopPayloadFromSellerApplication(userId, app as Record<string, unknown>))
     .select("id")
     .maybeSingle()
 

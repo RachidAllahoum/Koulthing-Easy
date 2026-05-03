@@ -58,6 +58,7 @@ export default function SellerReelsPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [reels, setReels] = useState<SellerReel[]>([])
   const [shopId, setShopId] = useState<string | null>(null)
+  const [catalogProducts, setCatalogProducts] = useState<{ id: string; name: string }[]>([])
   const { toast } = useToast()
 
   const loadReels = async () => {
@@ -74,6 +75,13 @@ export default function SellerReelsPage() {
       return
     }
     setShopId(myShop.id)
+
+    const { data: prodRows } = await supabase
+      .from("products")
+      .select("id, name")
+      .eq("shop_id", myShop.id)
+      .order("created_at", { ascending: false })
+    setCatalogProducts((prodRows ?? []).map((p) => ({ id: p.id, name: p.name })))
 
     const { data, error } = await supabase
       .from("reels")
@@ -294,6 +302,8 @@ export default function SellerReelsPage() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onSubmit={handleAddReel}
+        products={catalogProducts}
+        uploadUserId={user?.id ?? null}
       />
     </div>
   )

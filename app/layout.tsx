@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
@@ -7,6 +7,7 @@ import { CartProvider } from '@/lib/cart-context'
 import { MessagingProvider } from '@/lib/messaging-context'
 import { ShopsProvider } from '@/lib/shops-context'
 import { ReelsProvider } from '@/lib/reels-context'
+import { WishlistProvider } from '@/lib/wishlist-context'
 import { Toaster } from '@/components/ui/toaster'
 
 const _geist = Geist({ subsets: ["latin"] });
@@ -35,6 +36,11 @@ export const metadata: Metadata = {
   },
 }
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+}
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -44,15 +50,17 @@ export default function RootLayout({
     <html lang="en">
       <body className="font-sans antialiased">
         <AuthProvider>
-          <CartProvider>
-            <MessagingProvider>
-              <ShopsProvider>
-                <ReelsProvider>
-                  {children}
-                </ReelsProvider>
-              </ShopsProvider>
-            </MessagingProvider>
-          </CartProvider>
+          <WishlistProvider>
+            <CartProvider>
+              <MessagingProvider>
+                <ShopsProvider>
+                  <ReelsProvider>
+                    {children}
+                  </ReelsProvider>
+                </ShopsProvider>
+              </MessagingProvider>
+            </CartProvider>
+          </WishlistProvider>
         </AuthProvider>
         <Toaster />
         <Analytics />

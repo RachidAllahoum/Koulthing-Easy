@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Header } from "@/components/header"
@@ -7,6 +8,8 @@ import { Footer } from "@/components/footer"
 import { Button } from "@/components/ui/button"
 import { useCart } from "@/lib/cart-context"
 import { useAuth } from "@/lib/auth-context"
+import { supabase } from "@/lib/supabase-client"
+import { computeKoulthingFee, KOULTHING_FEE_LABEL } from "@/lib/koulthing-fee"
 import {
   Minus,
   Plus,
@@ -16,37 +19,84 @@ import {
   ChevronRight,
   Package,
 } from "lucide-react"
+import { NoProductImage } from "@/components/no-uploaded-media"
 
 export default function CartPage() {
   const router = useRouter()
   const { items, updateQuantity, removeItem, total } = useCart()
-  const { isAuthenticated, user } = useAuth()
+  const { user } = useAuth()
+  const [busyLineId, setBusyLineId] = useState<string | null>(null)
 
   const shipping = total > 10000 ? 0 : 500
-  const finalTotal = total + shipping
+  const koulthingFee = computeKoulthingFee(total, shipping)
+  const finalTotal = total + shipping + koulthingFee
 
-  const canUseCart = isAuthenticated && user?.profileRole === "buyer"
+  const isBuyerUser = Boolean(user && user.profileRole === "buyer" && !user.isAdmin)
+  const canManageCart = !user || isBuyerUser
+  const canCheckoutAsBuyer = isBuyerUser
 
   const handleCheckout = () => {
-    if (!canUseCart) {
-      alert("Only buyers can use shopping cart")
+    if (!canManageCart) {
       return
     }
-    if (!isAuthenticated) {
-      router.push("/login?redirect=/checkout")
+    if (!user) {
+      router.push(`/login?redirect=${encodeURIComponent("/checkout")}`)
+      return
+    }
+    if (!canCheckoutAsBuyer) {
+      alert("Admin accounts cannot check out.")
       return
     }
     router.push("/checkout")
   }
 
-  if (!canUseCart) {
+  const getAvailableForLine = async (lineId: string): Promise<number | null> => {
+    const line = items.find((x) => x.id === lineId)
+    if (!line) return null
+    if (line.variantId) {
+      const { data, error } = await supabase
+        .from("stocks")
+        .select("quantity_total")
+        .eq("variant_id", line.variantId)
+        .limit(1)
+        .maybeSingle()
+      if (error) return null
+      return Math.max(0, Math.floor(Number(data?.quantity_total) || 0))
+    }
+    const { data, error } = await supabase
+      .from("products")
+      .select("stock")
+      .eq("id", line.productId)
+      .limit(1)
+      .maybeSingle()
+    if (error) return null
+    return Math.max(0, Math.floor(Number(data?.stock) || 0))
+  }
+
+  const handleIncrease = async (lineId: string) => {
+    const line = items.find((x) => x.id === lineId)
+    if (!line) return
+    setBusyLineId(lineId)
+    try {
+      const available = await getAvailableForLine(lineId)
+      if (available != null && line.quantity + 1 > available) {
+        alert(`Only ${available} items available`)
+        return
+      }
+      updateQuantity(lineId, line.quantity + 1)
+    } finally {
+      setBusyLineId(null)
+    }
+  }
+
+  if (!canManageCart) {
     return (
       <div className="min-h-screen flex flex-col bg-background">
         <Header />
         <main className="flex-1 container mx-auto px-4 md:px-6 py-16 flex items-center justify-center">
           <div className="max-w-md mx-auto text-center">
             <h1 className="text-2xl font-bold text-foreground mb-2">Cart Unavailable</h1>
-            <p className="text-muted-foreground mb-6">Only buyers can use shopping cart</p>
+            <p className="text-muted-foreground mb-6">Shopping cart is available for buyer accounts only.</p>
             <Button asChild size="lg" className="rounded-full gap-2">
               <Link href="/articles">
                 Browse Products
@@ -115,9 +165,11 @@ export default function CartPage() {
                 <div className="flex gap-4">
                   {/* Image */}
                   <div className="w-24 h-24 md:w-32 md:h-32 flex-shrink-0 rounded-xl bg-secondary overflow-hidden">
-                    <div className="w-full h-full flex items-center justify-center">
-                      <Package className="w-8 h-8 text-muted-foreground/30" />
-                    </div>
+                    {item.image ? (
+                      <img src={item.image} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <NoProductImage />
+                    )}
                   </div>
 
                   {/* Details */}
@@ -133,10 +185,12 @@ export default function CartPage() {
                         <h3 className="font-medium text-foreground line-clamp-2 mt-1">
                           {item.name}
                         </h3>
-                        <div className="flex items-center gap-3 mt-2 text-sm text-muted-foreground">
-                          {item.color && <span>Color: {item.color}</span>}
-                          {item.size && <span>Size: {item.size}</span>}
-                        </div>
+                        {(item.color || item.size) && (
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-sm text-muted-foreground">
+                            {item.color ? <span>Color: {item.color}</span> : null}
+                            {item.size ? <span>Size: {item.size}</span> : null}
+                          </div>
+                        )}
                       </div>
                       <button
                         onClick={() => removeItem(item.id)}
@@ -151,6 +205,7 @@ export default function CartPage() {
                       <div className="flex items-center border border-border rounded-lg overflow-hidden">
                         <button
                           onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                          disabled={busyLineId === item.id}
                           className="w-9 h-9 flex items-center justify-center hover:bg-secondary transition-colors"
                         >
                           <Minus className="w-4 h-4" />
@@ -159,7 +214,8 @@ export default function CartPage() {
                           {item.quantity}
                         </span>
                         <button
-                          onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                          onClick={() => void handleIncrease(item.id)}
+                          disabled={busyLineId === item.id}
                           className="w-9 h-9 flex items-center justify-center hover:bg-secondary transition-colors"
                         >
                           <Plus className="w-4 h-4" />
@@ -189,9 +245,11 @@ export default function CartPage() {
                 </div>
                 <div className="flex justify-between text-sm text-muted-foreground">
                   <span>Shipping</span>
-                  <span className={shipping === 0 ? "text-green-600" : ""}>
-                    {shipping === 0 ? "FREE" : `${shipping.toLocaleString()} DZD`}
-                  </span>
+                  <span>{shipping === 0 ? "0 DZD" : `${shipping.toLocaleString()} DZD`}</span>
+                </div>
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>{KOULTHING_FEE_LABEL}</span>
+                  <span>{koulthingFee.toLocaleString()} DZD</span>
                 </div>
               </div>
 
@@ -200,20 +258,16 @@ export default function CartPage() {
                 <span>{finalTotal.toLocaleString()} DZD</span>
               </div>
 
-              {total <= 10000 && (
-                <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-3">
-                  Free shipping on orders over 10,000 DZD! Add {(10000 - total).toLocaleString()} more to qualify.
-                </p>
-              )}
-
-              <Button 
-                size="lg" 
-                className="w-full rounded-full gap-2"
-                onClick={handleCheckout}
-              >
-                Proceed to Checkout
+              <Button size="lg" className="w-full rounded-full gap-2" onClick={handleCheckout}>
+                {user ? "Proceed to Checkout" : "Sign in to check out"}
                 <ArrowRight className="w-4 h-4" />
               </Button>
+
+              {!user && (
+                <p className="text-xs text-muted-foreground text-center">
+                  You can keep browsing; your cart stays on this device until you sign in.
+                </p>
+              )}
 
               <Button 
                 variant="outline" 

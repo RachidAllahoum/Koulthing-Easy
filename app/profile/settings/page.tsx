@@ -7,10 +7,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useState } from "react"
 import { useAuth } from "@/lib/auth-context"
+import { useToast } from "@/hooks/use-toast"
 import { ArrowLeft, Bell, Lock, Eye, EyeOff } from "lucide-react"
 
 export default function SettingsPage() {
-  const { user, updateProfile } = useAuth()
+  const { user, changePassword } = useAuth()
+  const { toast } = useToast()
   const [showPasswordForm, setShowPasswordForm] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [passwordData, setPasswordData] = useState({
@@ -23,15 +25,46 @@ export default function SettingsPage() {
     promotions: true,
     messages: true,
   })
+  const [passwordSaving, setPasswordSaving] = useState(false)
 
-  const handlePasswordChange = () => {
-    if (passwordData.new !== passwordData.confirm) {
-      alert("Passwords do not match")
+  const handlePasswordChange = async () => {
+    if (passwordData.new.length < 8) {
+      toast({ title: "Invalid password", description: "New password must be at least 8 characters.", variant: "destructive" })
       return
     }
-    alert("Password changed successfully")
-    setPasswordData({ current: "", new: "", confirm: "" })
-    setShowPasswordForm(false)
+    if (passwordData.new !== passwordData.confirm) {
+      toast({ title: "Passwords do not match", variant: "destructive" })
+      return
+    }
+    setPasswordSaving(true)
+    try {
+      await changePassword(passwordData.current, passwordData.new)
+      setPasswordData({ current: "", new: "", confirm: "" })
+      setShowPasswordForm(false)
+      toast({ title: "Password updated", description: "Your password was changed successfully." })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not update password."
+      toast({ title: "Password change failed", description: msg, variant: "destructive" })
+    } finally {
+      setPasswordSaving(false)
+    }
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <Header />
+        <main className="flex-1 py-12 px-4 flex items-center justify-center">
+          <p className="text-muted-foreground">
+            <Link href="/login" className="text-accent font-medium hover:underline">
+              Sign in
+            </Link>{" "}
+            to manage settings.
+          </p>
+        </main>
+        <Footer />
+      </div>
+    )
   }
 
   return (
@@ -116,9 +149,10 @@ export default function SettingsPage() {
                     <div className="flex gap-2">
                       <Button
                         className="rounded-lg"
-                        onClick={handlePasswordChange}
+                        disabled={passwordSaving}
+                        onClick={() => void handlePasswordChange()}
                       >
-                        Update Password
+                        {passwordSaving ? "Updating…" : "Update Password"}
                       </Button>
                       <Button
                         variant="outline"

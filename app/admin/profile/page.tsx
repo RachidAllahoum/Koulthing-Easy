@@ -87,11 +87,13 @@ export default function AdminProfilePage() {
           <div className="bg-card border border-border rounded-2xl p-6">
             {/* Avatar */}
             <div className="relative w-32 h-32 mx-auto mb-6">
-              <img
-                src={user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`}
-                alt={user.name}
-                className="w-full h-full rounded-full object-cover border-4 border-amber-500/20 shadow-lg"
-              />
+              <div className="w-full h-full rounded-full border-4 border-amber-500/20 shadow-lg overflow-hidden bg-secondary flex items-center justify-center">
+                {user.avatar ? (
+                  <img src={user.avatar} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <User className="w-14 h-14 text-muted-foreground" aria-hidden />
+                )}
+              </div>
               {isEditing && (
                 <button className="absolute bottom-0 right-0 w-10 h-10 bg-amber-500 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-amber-600 transition-colors">
                   <Camera className="w-5 h-5" />

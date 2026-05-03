@@ -2,6 +2,13 @@
 
 import { supabase } from "@/lib/supabase-client"
 
+/** Allows only same-origin style paths (e.g. `/checkout`), never protocol-relative or absolute URLs. */
+export function safeInternalRedirectPath(raw: string | null): string | null {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return null
+  if (raw.includes("://")) return null
+  return raw
+}
+
 /** Resolves where to send the user after a successful password login (uses `profiles` + latest application). */
 export async function resolvePostLoginPath(userId: string): Promise<string> {
   const { data: p, error } = await supabase

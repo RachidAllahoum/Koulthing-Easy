@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Store,
   Users,
+  ShoppingCart,
   Settings,
   LogOut,
   Menu,
@@ -23,6 +24,7 @@ import { Button } from "@/components/ui/button"
 const navItems = [
   { href: "/admin", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/admin/shop-approvals", icon: Store, label: "Shop Approvals" },
+  { href: "/admin/orders", icon: ShoppingCart, label: "Orders" },
   { href: "/admin/users", icon: Users, label: "Users" },
   { href: "/admin/analytics", icon: BarChart3, label: "Analytics" },
   { href: "/admin/profile", icon: User, label: "Profile" },

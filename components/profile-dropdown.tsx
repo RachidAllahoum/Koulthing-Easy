@@ -2,27 +2,26 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
-import { LogOut, Settings, User, ShoppingBag, Shield } from "lucide-react"
+import { LogOut, Settings, User as UserIcon, ShoppingBag, Shield } from "lucide-react"
 
 export function ProfileDropdown() {
-  const router = useRouter()
   const { user, logout } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
 
   if (!user) return null
 
   const handleLogout = async () => {
-    await logout()
     setIsOpen(false)
-    router.push("/")
+    await logout()
   }
+
+  const isBuyer = user.profileRole === "buyer" && !user.isAdmin
 
   const links = [
     ...(user.isAdmin ? [{ href: "/admin", icon: Shield, label: "Admin Panel" }] : []),
-    { href: "/profile", icon: User, label: "My Profile" },
-    { href: "/profile/orders", icon: ShoppingBag, label: "My Orders" },
+    { href: "/profile", icon: UserIcon, label: "My Profile" },
+    ...(isBuyer ? [{ href: "/profile/orders", icon: ShoppingBag, label: "My Orders" }] : []),
     { href: "/profile/settings", icon: Settings, label: "Settings" },
   ]
 
@@ -30,9 +29,14 @@ export function ProfileDropdown() {
     <div className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="h-10 w-10 rounded-full overflow-hidden border-2 border-border hover:border-primary transition-colors"
+        className="h-10 w-10 rounded-full overflow-hidden border-2 border-border hover:border-primary transition-colors flex items-center justify-center bg-secondary text-muted-foreground"
+        aria-label="Account menu"
       >
-        <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
+        {user.avatar ? (
+          <img src={user.avatar} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <UserIcon className="w-5 h-5" aria-hidden />
+        )}
       </button>
 
       {isOpen && (

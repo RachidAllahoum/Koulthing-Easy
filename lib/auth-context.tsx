@@ -3,6 +3,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react"
 import type { Session, User as SupabaseAuthUser } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase-client"
+import { Spinner } from "@/components/ui/spinner"
 
 export type UserRole = "admin" | "seller" | "buyer"
 
@@ -42,6 +43,8 @@ interface AuthContextType {
   /** Re-fetch `profiles` + rebuild `user` (e.g. after admin approval). */
   refreshUser: () => Promise<void>
   updateProfile: (data: Partial<Pick<User, "name" | "email">>) => Promise<void>
+  /** Verifies `currentPassword`, then sets the new password via Supabase Auth. */
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -93,6 +96,15 @@ function isAdminFromSession(authUser: SupabaseAuthUser, profile: ProfileRow | nu
   return raw === true || raw === "true"
 }
 
+/** Only real uploaded / OAuth URLs from Supabase Auth metadata — no generated placeholder avatars. */
+function avatarUrlFromAuthUser(authUser: SupabaseAuthUser): string | undefined {
+  const meta = authUser.user_metadata as Record<string, unknown> | undefined
+  const raw = meta?.avatar_url ?? meta?.picture
+  if (typeof raw !== "string") return undefined
+  const trimmed = raw.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
 function buildAppUser(authUser: SupabaseAuthUser, profile: ProfileRow | null): User {
   const email = profile?.email ?? authUser.email ?? ""
   const name = profile?.full_name || email.split("@")[0] || "User"
@@ -109,7 +121,7 @@ function buildAppUser(authUser: SupabaseAuthUser, profile: ProfileRow | null): U
     role,
     profileRole,
     sellerApproved,
-    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email || authUser.id}`,
+    avatar: avatarUrlFromAuthUser(authUser),
     createdAt: profile?.created_at ?? authUser.created_at ?? new Date().toISOString(),
     isSeller,
     isAdmin,
@@ -180,10 +192,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return
-
-      if (event === "INITIAL_SESSION") {
-        return
-      }
+      /** Bootstrap uses `getUser()`; listener handles live sign-in/out and token refresh. */
+      if (event === "INITIAL_SESSION") return
 
       void (async () => {
         try {
@@ -202,24 +212,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     void (async () => {
       try {
-        const { data, error } = await supabase.auth.getSession()
+        const { data, error } = await supabase.auth.getUser()
 
         if (cancelled) return
 
-        if (error) {
-          logAuthFailure("getSession", error, {
-            hint: "Check NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY and network.",
-          })
+        if (error || !data.user) {
+          if (error) {
+            logAuthFailure("getUser", error, {
+              hint: "Invalid or expired session; clearing local auth state.",
+            })
+            await supabase.auth.signOut()
+          }
           applyAuthState(null, null)
           return
         }
 
-        await applySession(data.session ?? null, "getSession")
+        const profileRow = await fetchProfileByUserId(data.user.id, "getUser")
+        if (cancelled) return
+        applyAuthState(data.user, profileRow)
       } catch (error) {
         logAuthFailure("initializeAuth", error, {
           hint: "Unexpected error during bootstrap; see stack in console.",
         })
-        if (!cancelled) applyAuthState(null, null)
+        if (!cancelled) {
+          await supabase.auth.signOut().catch(() => {})
+          applyAuthState(null, null)
+        }
       } finally {
         if (!cancelled) setIsLoading(false)
       }
@@ -296,31 +314,71 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const logout = async () => {
-    const { error } = await supabase.auth.signOut()
-    if (error) {
-      logAuthFailure("logout.signOut", error)
-      throw error
+  const logout = useCallback(async () => {
+    try {
+      const { error } = await supabase.auth.signOut()
+      if (error) {
+        logAuthFailure("logout.signOut", error)
+      }
+    } finally {
+      applyAuthState(null, null)
+      if (typeof window !== "undefined") {
+        window.location.assign("/")
+      }
     }
-    applyAuthState(null, null)
-  }
+  }, [applyAuthState])
 
   const updateProfile = async (data: Partial<Pick<User, "name" | "email">>) => {
     if (!user) return
 
-    const nextFullName = data.name ?? user.name
-    const nextEmail = data.email ?? user.email
+    const nextFullName = (data.name ?? user.name).trim()
+    const nextEmail = (data.email ?? user.email).trim().toLowerCase()
+    const prevEmail = user.email.trim().toLowerCase()
+
+    if (nextEmail !== prevEmail) {
+      const { error: authEmailError } = await supabase.auth.updateUser({ email: nextEmail })
+      if (authEmailError) {
+        logAuthFailure("updateProfile.authEmail", authEmailError, { userId: user.id })
+        throw authEmailError
+      }
+    }
 
     const { error } = await supabase
       .from("profiles")
       .update({
-        full_name: nextFullName,
+        full_name: nextFullName || null,
         email: nextEmail,
       })
       .eq("id", user.id)
 
     if (error) {
       logAuthFailure("updateProfile", error, { userId: user.id })
+      throw error
+    }
+
+    await refreshUser()
+  }
+
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    const { data, error: userError } = await supabase.auth.getUser()
+    const authUser = data.user
+    const email = authUser?.email?.trim()
+    if (userError || !email) {
+      throw new Error(userError?.message || "Not signed in")
+    }
+
+    const { error: signError } = await supabase.auth.signInWithPassword({
+      email,
+      password: currentPassword,
+    })
+    if (signError) {
+      logAuthFailure("changePassword.verify", signError)
+      throw new Error(signError.message || "Current password is incorrect")
+    }
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) {
+      logAuthFailure("changePassword.updateUser", error)
       throw error
     }
 
@@ -339,9 +397,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         logout,
         refreshUser,
         updateProfile,
+        changePassword,
       }}
     >
-      {children}
+      {isLoading ? (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-3" role="status">
+          <Spinner className="size-10 text-primary" />
+          <p className="text-sm text-muted-foreground">Checking your session…</p>
+        </div>
+      ) : (
+        children
+      )}
     </AuthContext.Provider>
   )
 }

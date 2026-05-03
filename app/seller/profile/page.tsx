@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
@@ -25,25 +25,39 @@ export default function SellerProfilePage() {
   const { toast } = useToast()
   const [isEditing, setIsEditing] = useState(false)
   const [formData, setFormData] = useState({
-    name: user?.name || "",
-    email: user?.email || "",
+    name: "",
+    email: "",
     phone: "+213 555 123 456",
     location: "Algiers, Algeria",
     bio: "Passionate seller with years of experience in fashion and accessories. Committed to providing quality products and excellent customer service.",
   })
+
+  useEffect(() => {
+    if (!user) return
+    setFormData((prev) => ({
+      ...prev,
+      name: user.name,
+      email: user.email,
+    }))
+  }, [user?.id, user?.name, user?.email])
 
   if (!user) {
     router.push("/login")
     return null
   }
 
-  const handleSave = () => {
-    updateProfile({ name: formData.name })
-    setIsEditing(false)
-    toast({
-      title: "Profile Updated",
-      description: "Your profile has been successfully updated.",
-    })
+  const handleSave = async () => {
+    try {
+      await updateProfile({ name: formData.name, email: formData.email })
+      setIsEditing(false)
+      toast({
+        title: "Profile saved",
+        description: "Your name and email were updated.",
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not save profile."
+      toast({ title: "Save failed", description: msg, variant: "destructive" })
+    }
   }
 
   const handleCancel = () => {
@@ -76,7 +90,7 @@ export default function SellerProfilePage() {
               <X className="w-4 h-4" />
               Cancel
             </Button>
-            <Button onClick={handleSave} className="rounded-xl gap-2">
+            <Button onClick={() => void handleSave()} className="rounded-xl gap-2">
               <Save className="w-4 h-4" />
               Save Changes
             </Button>
@@ -90,11 +104,13 @@ export default function SellerProfilePage() {
           <div className="bg-card border border-border rounded-2xl p-6">
             {/* Avatar */}
             <div className="relative w-32 h-32 mx-auto mb-6">
-              <img
-                src={user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`}
-                alt={user.name}
-                className="w-full h-full rounded-full object-cover border-4 border-background shadow-lg"
-              />
+              <div className="w-full h-full rounded-full border-4 border-background shadow-lg overflow-hidden bg-secondary flex items-center justify-center">
+                {user.avatar ? (
+                  <img src={user.avatar} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <User className="w-14 h-14 text-muted-foreground" aria-hidden />
+                )}
+              </div>
               {isEditing && (
                 <button className="absolute bottom-0 right-0 w-10 h-10 bg-primary text-primary-foreground rounded-full flex items-center justify-center shadow-lg hover:bg-primary/90 transition-colors">
                   <Camera className="w-5 h-5" />

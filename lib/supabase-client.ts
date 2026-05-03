@@ -1,6 +1,6 @@
 "use client"
 
-import { createClient } from "@supabase/supabase-js"
+import { createBrowserClient } from "@supabase/ssr"
 
 const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const rawAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -27,11 +27,12 @@ try {
   console.error("[supabase] NEXT_PUBLIC_SUPABASE_URL is not a valid URL:", supabaseUrl.slice(0, 48))
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    persistSession: typeof window !== "undefined",
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-    flowType: "pkce",
-  },
-})
+/**
+ * Browser Supabase client (cookie-backed session via @supabase/ssr).
+ * Keeps auth in sync with Edge middleware and avoids stale localStorage-only sessions.
+ *
+ * Storage and PostgREST calls automatically send the user's JWT from this session
+ * (no manual `Authorization` header). If Storage returns 403, fix RLS or ensure
+ * `middleware.ts` refreshes cookies and the user is signed in.
+ */
+export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey)

@@ -1,21 +1,57 @@
 import type { Article } from "@/lib/filter-utils"
 
+export function normalizeStringArray(v: string[] | null | undefined): string[] {
+  if (!Array.isArray(v)) return []
+  return v.map((s) => String(s).trim()).filter(Boolean)
+}
+
+export interface VariantStockRow {
+  quantity_total: number
+}
+
+export interface ProductVariantRow {
+  id: string
+  size: string
+  color: string
+  sku: string
+  price: number | string | null
+  stocks?: VariantStockRow[] | VariantStockRow | null
+}
+
 export interface ProductRow {
   id: string
   shop_id: string
   name: string
   description: string | null
   price: number | string
+  base_price?: number | string | null
   sizes_array: string[] | null
   colors_array: string[] | null
   stock: number
   images_array: string[] | null
   created_at: string
-  shops?: { name: string; seller_id?: string; is_active?: boolean } | { name: string; seller_id?: string; is_active?: boolean }[] | null
+  product_variants?: ProductVariantRow[] | null
+  shops?:
+    | { name: string; seller_id?: string; is_active?: boolean; shop_category?: string | null }
+    | { name: string; seller_id?: string; is_active?: boolean; shop_category?: string | null }[]
+    | null
 }
 
-const PLACEHOLDER_IMG =
-  "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=400&h=400&fit=crop"
+export function variantStockTotals(stocks: ProductVariantRow["stocks"]): { total: number } {
+  const row = Array.isArray(stocks) ? stocks[0] : stocks
+  const total = Math.max(0, Math.floor(Number(row?.quantity_total) || 0))
+  return { total }
+}
+
+export function variantAvailable(variant: ProductVariantRow): number {
+  const { total } = variantStockTotals(variant.stocks)
+  return total
+}
+
+function parseBasePrice(row: ProductRow): number {
+  const raw = row.base_price ?? row.price
+  return typeof raw === "string" ? parseFloat(raw) : Number(raw) || 0
+}
 
 export function mapProductToArticle(row: ProductRow, shopNameFallback = "Shop"): Article {
   const joined = row.shops
@@ -25,20 +61,80 @@ export function mapProductToArticle(row: ProductRow, shopNameFallback = "Shop"):
       : Array.isArray(joined) && joined[0]?.name
         ? joined[0].name
         : shopNameFallback
-  const price = typeof row.price === "string" ? parseFloat(row.price) : row.price
-  const image = row.images_array?.[0] || PLACEHOLDER_IMG
+  const shopSellerId =
+    joined && !Array.isArray(joined)
+      ? (joined.seller_id ?? null)
+      : Array.isArray(joined) && joined[0]
+        ? (joined[0].seller_id ?? null)
+        : null
+  const category =
+    joined && !Array.isArray(joined)
+      ? joined.shop_category?.trim() || shopName
+      : Array.isArray(joined) && joined[0]
+        ? joined[0].shop_category?.trim() || shopName
+        : shopName
+  const basePrice = parseBasePrice(row)
+  let listPrice = typeof row.price === "string" ? parseFloat(row.price) : row.price
+  if (!Number.isFinite(listPrice)) listPrice = 0
+  const image = row.images_array?.filter(Boolean)[0] ?? ""
+  const stockRaw = row.stock
+  let stock =
+    typeof stockRaw === "number" && Number.isFinite(stockRaw)
+      ? Math.max(0, Math.floor(stockRaw))
+      : Math.max(0, Math.floor(Number(stockRaw) || 0))
+
+  const variants = row.product_variants ?? []
+  let defaultVariantId: string | null = null
+  let defaultVariantSku: string | null = null
+
+  if (variants.length > 0) {
+    let minPrice = Number.POSITIVE_INFINITY
+    let totalAvail = 0
+    const inStock: ProductVariantRow[] = []
+    for (const v of variants) {
+      const av = variantAvailable(v)
+      if (av <= 0) continue
+      totalAvail += av
+      inStock.push(v)
+      const rawP = v.price
+      const vp =
+        rawP != null && String(rawP).trim() !== ""
+          ? typeof rawP === "string"
+            ? parseFloat(rawP)
+            : Number(rawP)
+          : basePrice
+      if (Number.isFinite(vp)) {
+        minPrice = Math.min(minPrice, vp)
+      }
+    }
+    if (minPrice !== Number.POSITIVE_INFINITY) {
+      listPrice = minPrice
+    }
+    stock = totalAvail
+    if (inStock.length === 1) {
+      defaultVariantId = String(inStock[0].id)
+      defaultVariantSku = inStock[0].sku ? String(inStock[0].sku) : null
+    }
+  }
 
   return {
     id: row.id,
     title: row.name,
-    price: Number.isFinite(price) ? price : 0,
+    price: Number.isFinite(listPrice) ? listPrice : 0,
     shopName,
     shopId: row.shop_id,
+    shopSellerId,
     rating: 4.5,
     reviewCount: 0,
     image,
-    category: shopName,
+    category,
     createdAt: row.created_at,
+    sizes: normalizeStringArray(row.sizes_array),
+    colors: normalizeStringArray(row.colors_array),
+    soldCount: 0,
+    stock,
+    defaultVariantId,
+    defaultVariantSku,
   }
 }
 

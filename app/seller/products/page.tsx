@@ -9,7 +9,9 @@ import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/lib/auth-context"
 import { supabase } from "@/lib/supabase-client"
 import { useEffect } from "react"
-import { mapColorNameToSwatch } from "@/lib/products-map"
+import type { ProductFormData } from "@/components/add-product-modal"
+import { saveSellerProductCatalog } from "@/lib/seller-save-product"
+import { NoProductImage } from "@/components/no-uploaded-media"
 
 interface SellerProduct {
   id: string
@@ -24,6 +26,7 @@ interface SellerProduct {
   sizes: string[]
   colors: string[]
   images: string[]
+  variants: { id: string; sku: string; size: string; color: string; stock: number; variantPrice: string }[]
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -60,13 +63,14 @@ export default function SellerProductsPage() {
   const [editingProductId, setEditingProductId] = useState<string | null>(null)
   const [products, setProducts] = useState<SellerProduct[]>([])
   const [shopId, setShopId] = useState<string | null>(null)
+  const [shopCategory, setShopCategory] = useState<string | null>(null)
   const { toast } = useToast()
 
   const loadProducts = async () => {
     if (!user) return
     const { data: myShop, error: shopError } = await supabase
       .from("shops")
-      .select("id")
+      .select("id, shop_category")
       .eq("seller_id", user.id)
       .limit(1)
       .maybeSingle()
@@ -77,14 +81,18 @@ export default function SellerProductsPage() {
     }
     if (!myShop) {
       setShopId(null)
+      setShopCategory(null)
       setProducts([])
       return
     }
     setShopId(myShop.id)
+    setShopCategory(typeof myShop.shop_category === "string" ? myShop.shop_category : null)
 
     const { data, error } = await supabase
       .from("products")
-      .select("id, name, description, price, stock, images_array, sizes_array, colors_array, created_at")
+      .select(
+        "id, name, description, price, base_price, stock, images_array, sizes_array, colors_array, created_at, product_variants ( id, size, color, sku, price, stocks ( quantity_total ) )",
+      )
       .eq("shop_id", myShop.id)
       .order("created_at", { ascending: false })
 
@@ -93,20 +101,52 @@ export default function SellerProductsPage() {
       return
     }
 
-    const mapped = (data ?? []).map((p) => ({
-      id: p.id,
-      name: p.name,
-      category: "Product",
-      price: Number(p.price),
-      stock: p.stock,
-      sold: 0,
-      status: p.stock > 10 ? "active" : p.stock > 0 ? "low_stock" : "out_of_stock",
-      image: p.images_array?.[0] || "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=300&h=300&fit=crop",
-      description: p.description || "",
-      sizes: p.sizes_array || [],
-      colors: p.colors_array || [],
-      images: p.images_array || [],
-    })) as SellerProduct[]
+    const catLabel = (typeof myShop.shop_category === "string" && myShop.shop_category.trim()
+      ? myShop.shop_category.trim()
+      : "Product") as string
+
+    const mapped = (data ?? []).map((p) => {
+      const rawVariants = (p as { product_variants?: unknown[] }).product_variants ?? []
+      const baseNum = Number((p as { base_price?: unknown }).base_price ?? p.price) || 0
+      const variants = rawVariants.map((v) => {
+        const row = v as Record<string, unknown>
+        const stocks = row.stocks as { quantity_total?: unknown }[] | { quantity_total?: unknown } | null | undefined
+        const st = Array.isArray(stocks) ? stocks[0] : stocks
+        const total = Math.max(0, Math.floor(Number(st?.quantity_total) || 0))
+        const rawPrice = row.price
+        const vPrice =
+          rawPrice != null && String(rawPrice).trim() !== ""
+            ? typeof rawPrice === "string"
+              ? parseFloat(rawPrice)
+              : Number(rawPrice)
+            : null
+        const variantPrice =
+          vPrice != null && Number.isFinite(vPrice) && Math.abs(vPrice - baseNum) > 0.005 ? String(vPrice) : ""
+        return {
+          id: String(row.id),
+          sku: String(row.sku ?? "").trim(),
+          size: String(row.size ?? "").trim(),
+          color: String(row.color ?? "").trim(),
+          stock: total,
+          variantPrice,
+        }
+      })
+      return {
+        id: p.id as string,
+        name: p.name as string,
+        category: catLabel,
+        price: baseNum,
+        stock: Number(p.stock) || 0,
+        sold: 0,
+        status: (Number(p.stock) || 0) > 10 ? "active" : (Number(p.stock) || 0) > 0 ? "low_stock" : "out_of_stock",
+        image: (p.images_array as string[] | null)?.filter(Boolean)[0] || "",
+        description: (p.description as string | null) || "",
+        sizes: (p.sizes_array as string[] | null) || [],
+        colors: (p.colors_array as string[] | null) || [],
+        images: (p.images_array as string[] | null) || [],
+        variants,
+      } satisfies SellerProduct
+    })
     setProducts(mapped)
   }
 
@@ -119,66 +159,31 @@ export default function SellerProductsPage() {
     product.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const handleAddProduct = (productData: {
-    name: string
-    description: string
-    price: string
-    category: string
-    colors: { name: string; value: string }[]
-    sizes: string[]
-    quantity: string
-    images: string[]
-  }) => {
-    if (!shopId) return
-    ;(async () => {
-      if (modalMode === "edit" && editingProductId) {
-        const { error } = await supabase
-          .from("products")
-          .update({
-            name: productData.name,
-            description: productData.description,
-            price: parseFloat(productData.price),
-            sizes_array: productData.sizes,
-            colors_array: productData.colors.map((c) => c.name),
-            stock: parseInt(productData.quantity),
-            images_array: productData.images,
-          })
-          .eq("id", editingProductId)
+  const handleAddProduct = (productData: ProductFormData): Promise<void> => {
+    if (!shopId || !user?.id) {
+      return Promise.resolve()
+    }
+    return (async () => {
+      const result = await saveSellerProductCatalog(supabase, {
+        shopId,
+        profileId: user.id,
+        productData,
+        mode: modalMode,
+        editingProductId,
+      })
+      if (!result.ok) {
+        toast({ title: modalMode === "edit" ? "Update failed" : "Add failed", description: result.message, variant: "destructive" })
+        return
+      }
 
-        if (error) {
-          toast({ title: "Update failed", description: error.message, variant: "destructive" })
-          return
-        }
-        await loadProducts()
-        toast({
-          title: "Product updated",
-          description: `${productData.name} has been saved.`,
-        })
+      await loadProducts()
+      if (modalMode === "edit") {
+        toast({ title: "Product updated", description: `${productData.name} has been saved.` })
         setEditingProductId(null)
         setModalMode("create")
-        return
+      } else {
+        toast({ title: "Product Added", description: `${productData.name} has been added to your store.` })
       }
-
-      const { error } = await supabase.from("products").insert({
-        shop_id: shopId,
-        name: productData.name,
-        description: productData.description,
-        price: parseFloat(productData.price),
-        sizes_array: productData.sizes,
-        colors_array: productData.colors.map((c) => c.name),
-        stock: parseInt(productData.quantity),
-        images_array: productData.images,
-      })
-
-      if (error) {
-        toast({ title: "Add failed", description: error.message, variant: "destructive" })
-        return
-      }
-      await loadProducts()
-      toast({
-        title: "Product Added",
-        description: `${productData.name} has been added to your store.`,
-      })
     })()
   }
 
@@ -256,12 +261,16 @@ export default function SellerProductsPage() {
             className="bg-card border border-border rounded-xl overflow-hidden group"
           >
             {/* Image */}
-            <div className="relative aspect-square bg-secondary">
-              <img
-                src={product.image}
-                alt={product.name}
-                className="absolute inset-0 w-full h-full object-cover"
-              />
+            <div className="relative aspect-square bg-secondary flex items-center justify-center">
+              {product.image ? (
+                <img
+                  src={product.image}
+                  alt={product.name}
+                  className="absolute inset-0 w-full h-full object-cover"
+                />
+              ) : (
+                <NoProductImage />
+              )}
               <div className="absolute top-3 right-3">
                 <StatusBadge status={product.status} />
               </div>
@@ -337,6 +346,7 @@ export default function SellerProductsPage() {
 
       {/* Add Product Modal */}
       <AddProductModal
+        key={editingProductId ?? "create"}
         isOpen={isAddModalOpen}
         onClose={() => {
           setIsAddModalOpen(false)
@@ -345,6 +355,10 @@ export default function SellerProductsPage() {
         }}
         onSubmit={handleAddProduct}
         mode={modalMode}
+        uploadUserId={user?.id ?? null}
+        shopId={shopId}
+        editingProductId={editingProductId}
+        shopCategory={shopCategory}
         initialValues={
           modalMode === "edit" && editingProductId
             ? (() => {
@@ -353,12 +367,16 @@ export default function SellerProductsPage() {
                 return {
                   name: p.name,
                   description: p.description,
-                  price: String(p.price),
-                  category: p.category === "Product" ? "Other" : p.category,
-                  sizes: p.sizes,
-                  colors: p.colors.map((c) => mapColorNameToSwatch(c)),
-                  quantity: String(p.stock),
+                  basePrice: String(p.price),
                   images: p.images,
+                  variants: p.variants.map((v) => ({
+                    clientKey: v.id,
+                    sku: v.sku,
+                    size: v.size,
+                    color: v.color,
+                    stock: String(v.stock),
+                    variantPrice: v.variantPrice,
+                  })),
                 }
               })()
             : undefined

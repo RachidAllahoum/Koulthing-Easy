@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { Menu, X, ShoppingCart } from "lucide-react"
+import { Menu, X, ShoppingCart, Heart } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/lib/auth-context"
@@ -13,7 +13,7 @@ export function Header() {
   const { isAuthenticated, user } = useAuth()
   const { itemCount } = useCart()
 
-  const canUseCart = isAuthenticated && user?.profileRole === "buyer"
+  const showBuyerNav = Boolean(isAuthenticated && user?.profileRole === "buyer" && !user?.isAdmin)
 
   return (
     <header className="sticky top-0 z-50 w-full bg-background/80 backdrop-blur-md border-b border-border">
@@ -46,20 +46,29 @@ export function Header() {
 
         {/* Desktop CTA */}
         <div className="hidden md:flex items-center gap-4">
-          {/* Cart Icon - Only show for buyers */}
-          {canUseCart && (
-            <Link
-              href="/cart"
-              className="relative p-2 text-muted-foreground hover:text-foreground transition-colors"
-              title="Shopping Cart"
-            >
-              <ShoppingCart className="w-6 h-6" />
-              {itemCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-accent text-accent-foreground text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                  {itemCount > 9 ? "9+" : itemCount}
-                </span>
-              )}
-            </Link>
+          {/* Buyer-only shortcuts */}
+          {showBuyerNav && (
+            <>
+              <Link
+                href="/wishlist"
+                className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                title="Wishlist"
+              >
+                <Heart className="w-6 h-6" />
+              </Link>
+              <Link
+                href="/cart"
+                className="relative p-2 text-muted-foreground hover:text-foreground transition-colors"
+                title="Shopping Cart"
+              >
+                <ShoppingCart className="w-6 h-6" />
+                {itemCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-accent text-accent-foreground text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                    {itemCount > 9 ? "9+" : itemCount}
+                  </span>
+                )}
+              </Link>
+            </>
           )}
           
           {isAuthenticated ? (
@@ -91,7 +100,7 @@ export function Header() {
                 Log in
               </Link>
               <Button asChild className="rounded-full px-6">
-                <Link href="/register">Get Started</Link>
+                <Link href="/register">Create account</Link>
               </Button>
             </>
           )}
@@ -129,20 +138,30 @@ export function Header() {
             >
               Shops
             </Link>
-            {canUseCart && (
-              <Link
-                href="/cart"
-                className="text-base font-medium text-foreground transition-colors hover:text-muted-foreground flex items-center gap-2"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                <ShoppingCart className="w-5 h-5" />
-                Cart
-                {itemCount > 0 && (
-                  <span className="ml-auto bg-accent text-accent-foreground text-xs font-bold px-2 py-1 rounded-full">
-                    {itemCount}
-                  </span>
-                )}
-              </Link>
+            {showBuyerNav && (
+              <>
+                <Link
+                  href="/wishlist"
+                  className="text-base font-medium text-foreground transition-colors hover:text-muted-foreground flex items-center gap-2"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  <Heart className="w-5 h-5" />
+                  Wishlist
+                </Link>
+                <Link
+                  href="/cart"
+                  className="text-base font-medium text-foreground transition-colors hover:text-muted-foreground flex items-center gap-2"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  <ShoppingCart className="w-5 h-5" />
+                  Cart
+                  {itemCount > 0 && (
+                    <span className="ml-auto bg-accent text-accent-foreground text-xs font-bold px-2 py-1 rounded-full">
+                      {itemCount}
+                    </span>
+                  )}
+                </Link>
+              </>
             )}
             {!isAuthenticated && (
               <div className="flex flex-col gap-3 pt-4 border-t border-border">
@@ -155,7 +174,7 @@ export function Header() {
                 </Link>
                 <Button asChild className="rounded-full">
                   <Link href="/register" onClick={() => setIsMenuOpen(false)}>
-                    Get Started
+                    Create account
                   </Link>
                 </Button>
               </div>

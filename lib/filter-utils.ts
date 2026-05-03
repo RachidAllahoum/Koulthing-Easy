@@ -5,6 +5,8 @@ export interface Article {
   originalPrice?: number
   shopName: string
   shopId: string
+  /** Shop owner — follow UI on cards / listings. */
+  shopSellerId?: string | null
   rating: number
   reviewCount: number
   image: string
@@ -12,10 +14,23 @@ export interface Article {
   badge?: "suggested" | "bestselling" | "ad"
   /** ISO timestamp from DB when available (used for sorting) */
   createdAt?: string
+  /** From `products.sizes_array` — when non-empty, quick-add sends users to the product page to choose options. */
+  sizes?: string[]
+  /** Raw color names from `products.colors_array` (same as DB). */
+  colors?: string[]
+  /** Units sold from orders payload aggregation (when available). */
+  soldCount?: number
+  /** From `products.stock` — listings and cart use for availability. */
+  stock?: number
+  /** When exactly one in-stock variant exists, quick-add can target this row. */
+  defaultVariantId?: string | null
+  defaultVariantSku?: string | null
 }
 
 export interface Shop {
   id: string
+  /** Shop owner — used to hide follow on your own shop. */
+  sellerId: string
   name: string
   description: string
   category: string
@@ -23,6 +38,7 @@ export interface Shop {
   coverImage: string
   rating: number
   reviewCount: number
+  /** Follower count for sorting/filter UI (from `get_shop_follower_count` on listings). */
   followers: number
   location: string
   isFollowing?: boolean
